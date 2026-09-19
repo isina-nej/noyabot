@@ -1378,6 +1378,61 @@ async def voice_command(message: Message, command: CommandObject):
     await _handle_noya_tts(message, text)
 
 
+# --- Agent ACTION dispatcher (AI decides which tool to use) ---
+
+_ACTION_RE = re.compile(
+    r"^\s*\[ACTION:(tts|image|image_edit)\]\s*(.+)",
+    re.IGNORECASE | re.DOTALL,
+)
+
+
+async def _dispatch_ai_action(
+    message: Message,
+    answer: str,
+    *,
+    images: list[dict] | None = None,
+) -> bool:
+    """Parse AI response for [ACTION:xxx] tags and execute.
+
+    Returns True if an action was handled (caller should NOT send text reply).
+    """
+    m = _ACTION_RE.match((answer or "").strip())
+    if not m:
+        return False
+
+    action = m.group(1).lower()
+    content = m.group(2).strip()
+
+    if action == "tts":
+        logger.info("[NOYA-AGENT] 🔊 AI chose TTS: %r", content[:60])
+        await _handle_noya_tts(message, content)
+        return True
+
+    if action == "image":
+        logger.info("[NOYA-AGENT] 🖼️ AI chose image gen: %r", content[:60])
+        await _handle_noya_image_generation(message, content)
+        return True
+
+    if action == "image_edit":
+        if images:
+            reply_img = next(
+                (i for i in images if i.get("source") in ("reply", "reply_parent")),
+                None,
+            )
+            if reply_img:
+                logger.info("[NOYA-AGENT] ✏️ AI chose image edit: %r", content[:60])
+                await _handle_noya_image_edit(
+                    message, content, reply_img["data"],
+                    reply_img.get("mime", "image/jpeg"),
+                )
+                return True
+        # Fallback: no image available for edit, send text
+        logger.warning("[NOYA-AGENT] image_edit requested but no reply image")
+        return False
+
+    return False
+
+
 @router.message(Command("new"))
 async def new_chat(message: Message, bot: Bot):
     chat = message.chat
@@ -1777,11 +1832,6 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     if img_prompt and not images:
         await _handle_noya_image_generation(message, img_prompt)
         return
-    # TTS: detect voice request in natural language
-    voice_text = extract_voice_text(ask)
-    if voice_text:
-        await _handle_noya_tts(message, voice_text)
-        return
     # Image edit: user replies to an image with edit instructions
     reply_has_image = bool(images and any(i.get("source") in ("reply", "reply_parent") for i in images))
     if reply_has_image and _is_image_edit_request(ask, True):
@@ -1800,7 +1850,10 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         images=images or None,
     )
     t_reply = monotonic()
-    await reply_noya_answer(message, answer)
+    # --- Agent ACTION dispatch ---
+    handled = await _dispatch_ai_action(message, answer or "", images=images)
+    if not handled:
+        await reply_noya_answer(message, answer)
     logger.info(
         "[NOYA-TIMING] 📤 Telegram reply finished for msg_id=%s in %.1fms (total_turn=%.1fms)",
         message.message_id,
