@@ -1856,10 +1856,14 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         img_bytes = base64.b64decode(agent_metadata["generated_image_b64"])
         await message.reply_photo(BufferedInputFile(img_bytes, filename="noya_image.png"), caption=answer or "")
     elif agent_metadata.get("generated_tts_audio"):
-        # TTS audio already stored by tool handler; fetch it
-        from botapp.agent.tools import _TTS_RESULT_CACHE
-        # audio was already consumed by the tool, answer text is the reply
-        await reply_noya_answer(message, answer)
+        audio_bytes = agent_metadata["generated_tts_audio"]
+        from io import BytesIO
+        voice_file = BufferedInputFile(BytesIO(audio_bytes), filename="noya_voice.ogg")
+        await message.answer_voice(voice_file)
+        # Also send text if it has extra content beyond "صدا آماده شد."
+        clean_answer = (answer or "").replace("صدا آماده شد.", "").strip()
+        if clean_answer:
+            await reply_noya_answer(message, clean_answer)
     else:
         # --- Legacy ACTION dispatch (fallback for non-agent mode) ---
         handled = await _dispatch_ai_action(message, answer or "", images=images)
