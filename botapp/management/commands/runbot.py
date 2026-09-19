@@ -1857,8 +1857,8 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         await message.reply_photo(BufferedInputFile(img_bytes, filename="noya_image.png"), caption=answer or "")
     elif agent_metadata.get("generated_tts_audio"):
         audio_bytes = agent_metadata["generated_tts_audio"]
-        voice_file = BufferedInputFile(audio_bytes, filename="noya_voice.ogg")
-        await message.answer_voice(voice_file)
+        voice_file = BufferedInputFile(audio_bytes, filename="noya_voice.mp3")
+        await message.reply_voice(voice=voice_file)
         clean_answer = (answer or "").replace("صدا آماده شد.", "").strip()
         if clean_answer:
             await reply_noya_answer(message, clean_answer)
