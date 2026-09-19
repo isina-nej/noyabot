@@ -7,6 +7,7 @@ instead of becoming a fake admin-command error.
 from __future__ import annotations
 
 import logging
+import os
 
 from django.conf import settings as dj_settings
 
@@ -40,7 +41,8 @@ async def should_route_to_agent(text: str, *, chat_id: int, provider=None) -> bo
     if cached is not None:
         return bool(cached)
 
-    client = provider or NoyaAgentProvider(timeout=20.0)
+    timeout = float(os.getenv("AGENT_CLASSIFY_TIMEOUT", "2.5"))
+    client = provider or NoyaAgentProvider(timeout=timeout)
     try:
         decision = await client.classify_route(stripped, chat_id=chat_id)
     except Exception:

@@ -147,7 +147,16 @@ class AgentTriggerFilter(BaseFilter):
         }:
             me = await bot.me()
             if int(replied_user.id) == int(me.id):
+                # Don't route obvious casual/clock/search/image requests to agent
+                if any(w in stripped for w in ("عکس", "تصویر", "نقاشی", "draw", "image", "بکش", "بساز")):
+                    return False
+
                 from botapp.agent.target_chat import extract_explicit_chat_ref
+                from botapp.noya_clock import is_clock_question
+                from botapp.noya_search import needs_web_search
+
+                if is_clock_question(stripped) or needs_web_search(stripped):
+                    return False
 
                 _, remainder = extract_explicit_chat_ref(stripped)
                 parse_text = remainder or stripped
