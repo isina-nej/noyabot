@@ -278,6 +278,50 @@ async def call_noya_api(
         return "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید."
 
 
+async def generate_noya_image(prompt: str) -> bytes | None:
+    """Generate image via 9Router /v1/images/generations endpoint."""
+    api_key = os.getenv("NOYA_API_KEY", "").strip()
+    if not api_key:
+        logger.error("NOYA_API_KEY is not configured for image generation")
+        return None
+
+    base_url = os.getenv("NOYA_API_URL", "http://127.0.0.1:20128/v1/chat/completions").strip()
+    if "/chat/completions" in base_url:
+        img_url = base_url.replace("/chat/completions", "/images/generations")
+    else:
+        img_url = base_url.rstrip("/") + "/images/generations"
+
+    model = os.getenv("NOYA_IMAGE_MODEL", "image").strip()
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "prompt": prompt,
+        "n": 1,
+        "size": "512x512",
+    }
+    try:
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(img_url, headers=headers, json=payload)
+            resp.raise_for_status()
+            data = resp.json()
+            item = (data.get("data") or [{}])[0]
+            b64 = item.get("b64_json")
+            if b64:
+                import base64
+                return base64.b64decode(b64)
+            img_url_resp = item.get("url")
+            if img_url_resp:
+                r = await client.get(img_url_resp)
+                r.raise_for_status()
+                return r.content
+    except Exception:
+        logger.exception("Noya image generation failed prompt=%s", prompt[:80])
+    return None
+
+
 async def call_ai_api(
     api_url: str,
     question: str,

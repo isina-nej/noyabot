@@ -17,6 +17,7 @@ from aiogram.enums import ChatMemberStatus, ChatType
 from aiogram.exceptions import TelegramAPIError, TelegramBadRequest, TelegramForbiddenError
 from aiogram.filters import BaseFilter, Command, CommandObject
 from aiogram.types import (
+    BufferedInputFile,
     CallbackQuery,
     ChatMemberUpdated,
     ChatPermissions,
@@ -30,6 +31,7 @@ from botapp.services import (
     add_warning,
     call_ai_api as request_ai_answer,
     call_noya_api,
+    generate_noya_image,
     clear_warnings,
     contains_blocked_word,
     consume_group_quota,
@@ -1221,6 +1223,58 @@ async def prompt(message: Message, command: CommandObject):
     await reply_noya_answer(message, answer)
 
 
+_IMAGE_TRIGGER_RE = re.compile(
+    r"^(?:لطفاً\s+|لطفا\s+)?(?:برام\s+|واسم\s+)?(?:یه\s+|یک\s+)?(?:عکس|تصویر|نقاشی)\s+(?:از\s+)?(.+?)\s*(?:بکش|بساز|تولید کن|درست کن|بکشی|بکشش|بسازش|بسازی)[\s!؟?.]*$"
+    r"|^(?:عکس|تصویر|نقاشی)\s+(?:از\s+)?(.+?)\s*(?:بکش|بساز|تولید کن|درست کن|بکشی|بکشش|بسازش|بسازی)[\s!؟?.]*$"
+    r"|^(?:draw|generate|paint|image\s+of)\s+(.+)[\s!؟?.]*$",
+    re.IGNORECASE,
+)
+
+
+def extract_image_prompt(text: str) -> str | None:
+    t = (text or "").strip()
+    match = _IMAGE_TRIGGER_RE.match(t)
+    if match:
+        for g in match.groups():
+            if g and g.strip():
+                return g.strip()
+    return None
+
+
+async def _handle_noya_image_generation(message: Message, prompt_text: str):
+    prompt_clean = (prompt_text or "").strip()
+    if not prompt_clean:
+        await message.reply("لطفاً توصیف عکسی که می‌خوای رو بگو؛ مثلاً: یک گربه سفید روی مبل")
+        return
+    if message.bot:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
+    progress = await message.reply("در حال کشیدن نقاشی برات… 🎨")
+    image_bytes = await generate_noya_image(prompt_clean)
+    if not image_bytes:
+        await progress.edit_text("متأسفانه نتونستم این عکس رو بسازم. لطفاً دوباره با یه توصیف دیگه امتحان کن.")
+        return
+    try:
+        photo = BufferedInputFile(image_bytes, filename="noya.png")
+        caption = f"اینم نقاشیت! 🎨\n<blockquote>{escape(prompt_clean[:120])}</blockquote>"
+        await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
+        try:
+            await progress.delete()
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("Failed sending generated photo to chat=%s", message.chat.id)
+        await progress.edit_text("عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
+
+
+@router.message(Command("draw", "image", "pic", "عکس"))
+async def draw_command(message: Message, command: CommandObject):
+    prompt_text = action_reason(command)
+    if not prompt_text:
+        await message.reply("استفاده: /draw توصیف عکس\nمثلاً: /draw یک گربه سفید بامزه روی مبل")
+        return
+    await _handle_noya_image_generation(message, prompt_text)
+
+
 @router.message(Command("new"))
 async def new_chat(message: Message, bot: Bot):
     chat = message.chat
@@ -1608,6 +1662,10 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             f"note=این پیام از یک ربات دیگر است؛ اگر ریپلای/تگ کرده جواب بده."
             f"\n[/SPEAKER_BOT]\n\n{payload}"
         )
+    img_prompt = extract_image_prompt(ask)
+    if img_prompt and not images:
+        await _handle_noya_image_generation(message, img_prompt)
+        return
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     answer = await run_ai_with_memory(
         message,

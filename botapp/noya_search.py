@@ -193,16 +193,20 @@ async def web_search(query: str) -> str:
     if not q:
         return ""
     headers = {
-        "User-Agent": "TinkeraRobot-Noya/1.0 (+https://nodia.ir)",
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36"
+        ),
         "Accept-Language": "fa,en;q=0.8",
     }
     timeout = httpx.Timeout(_SEARCH_TIMEOUT)
     try:
         async with httpx.AsyncClient(timeout=timeout, follow_redirects=True, headers=headers) as client:
-            instant = await _duckduckgo_instant(client, q)
-            if instant:
-                return instant
-            return await _duckduckgo_lite(client, q)
+            lite = await _duckduckgo_lite(client, q)
+            if lite:
+                return lite
+            return await _duckduckgo_instant(client, q)
     except (httpx.HTTPError, ValueError, OSError):
         logger.info("noya_search_failed query=%s", q[:80])
         return ""

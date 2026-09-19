@@ -168,6 +168,14 @@ class NoyaClockAndSearchTest(TestCase):
         self.assertIn("تهران", result)
         client.assert_not_called()
 
+    def test_image_prompt_extraction(self):
+        from botapp.management.commands.runbot import extract_image_prompt
+
+        self.assertEqual(extract_image_prompt("برام عکس یک گربه بکش"), "یک گربه")
+        self.assertEqual(extract_image_prompt("عکس یه سیب قرمز بساز"), "یه سیب قرمز")
+        self.assertEqual(extract_image_prompt("draw a flying car"), "a flying car")
+        self.assertIsNone(extract_image_prompt("سلام چطوری نویا"))
+
     def test_search_trigger_skips_chat_and_clock(self):
         from botapp.noya_search import extract_search_query, needs_web_search
 
