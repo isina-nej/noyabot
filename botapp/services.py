@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from time import monotonic
 from collections import defaultdict, deque
 from datetime import timedelta
 from urllib.parse import urlsplit
@@ -233,13 +234,21 @@ async def call_noya_api(
     speaker_name: str = "",
     images: list[dict] | None = None,
 ) -> str:
+    t0 = monotonic()
+    logger.info(
+        "[NOYA-TIMING] ▶ START call_noya_api session=%s speaker_id=%s question=%r",
+        session_id,
+        speaker_user_id,
+        (question or "")[:60],
+    )
     if is_clock_question(question):
-        logger.info("noya_clock_direct session=%s", session_id)
+        dt = (monotonic() - t0) * 1000
+        logger.info("[NOYA-TIMING] ⏱ Clock direct response in %.1fms", dt)
         return format_clock_reply()
 
     api_key = os.getenv("NOYA_API_KEY", "").strip()
     if not api_key:
-        logger.error("NOYA_API_KEY is not configured")
+        logger.error("[NOYA-TIMING] ❌ NOYA_API_KEY is not configured")
         return "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید."
 
     url = os.getenv("NOYA_API_URL", "http://127.0.0.1:20128/v1/chat/completions").strip()
@@ -252,7 +261,14 @@ async def call_noya_api(
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    t_search = monotonic()
     search_block = await maybe_web_search(question)
+    search_ms = (monotonic() - t_search) * 1000
+    if search_block:
+        logger.info("[NOYA-TIMING] 🔍 Web search took %.1fms (content_len=%d)", search_ms, len(search_block))
+    else:
+        logger.info("[NOYA-TIMING] 🔍 Web search skipped/empty in %.1fms", search_ms)
+
     payload = {
         "model": model,
         "stream": False,
@@ -264,17 +280,31 @@ async def call_noya_api(
             search_block=search_block,
         ),
     }
+    t_ai = monotonic()
+    logger.info("[NOYA-TIMING] 🤖 Calling 9Router model=%s url=%s ...", model, url)
     try:
         async with httpx.AsyncClient(timeout=NOYA_API_TIMEOUT) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             data = response.json()
-            return data["choices"][0]["message"]["content"]
+            ai_ms = (monotonic() - t_ai) * 1000
+            content = data["choices"][0]["message"]["content"]
+            total_ms = (monotonic() - t0) * 1000
+            logger.info(
+                "[NOYA-TIMING] 🤖 9Router replied in %.1fms (status=%s, chars=%d) | TOTAL API DURATION: %.1fms",
+                ai_ms,
+                response.status_code,
+                len(content),
+                total_ms,
+            )
+            return content
     except httpx.TimeoutException:
-        logger.warning("Noya AI API request timed out after %ss", NOYA_API_TIMEOUT)
+        ai_ms = (monotonic() - t_ai) * 1000
+        logger.warning("[NOYA-TIMING] ⚠️ Noya AI API request timed out after %.1fms (cap=%ss)", ai_ms, NOYA_API_TIMEOUT)
         return "نویا این لحظه شلوغه و جواب نداد. یک دقیقه دیگه دوباره امتحان کن."
     except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
-        logger.exception("Noya AI API request failed")
+        ai_ms = (monotonic() - t_ai) * 1000
+        logger.exception("[NOYA-TIMING] ❌ Noya AI API request failed after %.1fms", ai_ms)
         return "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید."
 
 

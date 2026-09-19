@@ -1648,6 +1648,14 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         logger.exception("Failed collecting Noya vision images chat=%s", message.chat.id)
         images = []
     ask = (question or "").strip()
+    t_chat_start = monotonic()
+    logger.info(
+        "[NOYA-TIMING] 📩 Incoming chat msg_id=%s chat_id=%s from_user=%s: %r",
+        message.message_id,
+        message.chat.id,
+        getattr(message.from_user, "id", None),
+        ask[:60],
+    )
     if images and not ask:
         ask = "این تصویر / استیکر را ببین و پاسخ بده."
     # Attach reply-chain + recent group chatter so Noya can read the chat/tag target.
@@ -1674,7 +1682,14 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         session_id=f"telegram:{message.chat.id}",
         images=images or None,
     )
+    t_reply = monotonic()
     await reply_noya_answer(message, answer)
+    logger.info(
+        "[NOYA-TIMING] 📤 Telegram reply finished for msg_id=%s in %.1fms (total_turn=%.1fms)",
+        message.message_id,
+        (monotonic() - t_reply) * 1000,
+        (monotonic() - t_chat_start) * 1000,
+    )
 
 
 async def _handle_noya_text_message(message: Message, bot: Bot, *, allow_commands: bool) -> None:

@@ -249,17 +249,16 @@ async def run_ai_with_memory(
         ingestion_ms = (time.perf_counter() - t2) * 1000
     
     total_handler_ms = (time.perf_counter() - start_total) * 1000
-    
-    if _enabled("MEMORY_LATENCY_LOGGING_ENABLED", False):
-        logger.info(
-            "Memory Latency - chat_type=%s retrieval_ms=%.1f ai_request_ms=%.1f ingestion_ms=%.1f total_ms=%.1f",
-            getattr(getattr(message, "chat", None), "type", "unknown"),
-            retrieval_ms,
-            ai_request_ms,
-            ingestion_ms,
-            total_handler_ms
-        )
-        
+
+    logger.info(
+        "[NOYA-TIMING] 🧠 Latency summary - chat_type=%s retrieval_ms=%.1f ai_ms=%.1f ingestion_ms=%.1f total_ms=%.1f",
+        getattr(getattr(message, "chat", None), "type", "unknown"),
+        retrieval_ms,
+        ai_request_ms,
+        ingestion_ms,
+        total_handler_ms,
+    )
+
     return answer
 
 
