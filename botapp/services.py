@@ -308,6 +308,38 @@ async def call_noya_api(
         return "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید."
 
 
+async def _translate_prompt_for_image(prompt: str) -> str:
+    """Translate a Persian image prompt to English via 9Router for better quality."""
+    api_key = os.getenv("NOYA_API_KEY", "").strip()
+    base_url = os.getenv("NOYA_API_URL", "http://127.0.0.1:20128/v1/chat/completions").strip()
+    if not api_key:
+        return prompt
+    # ponytail: direct LLM call; extract to shared helper when 2nd caller appears
+    try:
+        t0 = monotonic()
+        async with httpx.AsyncClient(timeout=15.0) as client:
+            resp = await client.post(
+                base_url,
+                headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
+                json={
+                    "model": "fast",
+                    "messages": [
+                        {"role": "system", "content": "You are a prompt translator. Convert the user's Persian image description into a detailed, vivid English prompt suitable for AI image generation (Stable Diffusion / Flux). Output ONLY the English prompt, nothing else. Add artistic quality keywords like 'highly detailed, professional, 4k, cinematic lighting' when appropriate."},
+                        {"role": "user", "content": prompt},
+                    ],
+                    "max_tokens": 200,
+                    "temperature": 0.3,
+                },
+            )
+            resp.raise_for_status()
+            en = resp.json()["choices"][0]["message"]["content"].strip()
+            logger.info("[NOYA-TIMING] 🔤 Prompt translation %.1fms: %r → %r", (monotonic() - t0) * 1000, prompt, en[:100])
+            return en if en else prompt
+    except Exception:
+        logger.warning("Prompt translation failed, using original Persian", exc_info=True)
+        return prompt
+
+
 async def generate_noya_image(prompt: str) -> bytes | None:
     """Generate image via 9Router /v1/images/generations endpoint."""
     api_key = os.getenv("NOYA_API_KEY", "").strip()
@@ -321,6 +353,9 @@ async def generate_noya_image(prompt: str) -> bytes | None:
     else:
         img_url = base_url.rstrip("/") + "/images/generations"
 
+    # Translate Persian prompt to English for much better image quality
+    en_prompt = await _translate_prompt_for_image(prompt)
+
     model = os.getenv("NOYA_IMAGE_MODEL", "image").strip()
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -328,14 +363,16 @@ async def generate_noya_image(prompt: str) -> bytes | None:
     }
     payload = {
         "model": model,
-        "prompt": prompt,
+        "prompt": en_prompt,
         "n": 1,
-        "size": "512x512",
+        "size": "1024x1024",
     }
     try:
+        t0 = monotonic()
         async with httpx.AsyncClient(timeout=60.0) as client:
             resp = await client.post(img_url, headers=headers, json=payload)
             resp.raise_for_status()
+            logger.info("[NOYA-TIMING] 🖼️ Image generation took %.1fms", (monotonic() - t0) * 1000)
             data = resp.json()
             item = (data.get("data") or [{}])[0]
             b64 = item.get("b64_json")
@@ -348,7 +385,7 @@ async def generate_noya_image(prompt: str) -> bytes | None:
                 r.raise_for_status()
                 return r.content
     except Exception:
-        logger.exception("Noya image generation failed prompt=%s", prompt[:80])
+        logger.exception("Noya image generation failed prompt=%s", en_prompt[:80])
     return None
 
 
