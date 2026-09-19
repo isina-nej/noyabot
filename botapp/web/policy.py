@@ -98,6 +98,12 @@ TIME_SENSITIVE_TRIGGERS = (
     "release جدید",
     "api جدید",
     "event جاری",
+    "تاریخ انتشار",
+    "تاریخ عرضه",
+    "تاریخ آپدیت",
+    "تاریخ بروزرسانی",
+    "release date",
+    "release notes",
 )
 
 TECH_DOC_TRIGGERS = (
@@ -115,11 +121,26 @@ TECH_DOC_TRIGGERS = (
 CLOCK_PATTERNS = (
     "ساعت چنده",
     "ساعت چند است",
+    "ساعت چند",
+    "چه ساعتیه",
+    "چه ساعتی است",
+    "چه ساعتی",
+    "الان چه ساعتیه",
+    "الان ساعت چنده",
+    "ساعت الان",
     "تاریخ امروز",
+    "امروز چه تاریخیه",
+    "امروز چه روزیه",
     "امروز چندمه",
     "امروز چندم",
     "چه روزیه",
     "چه روزی است",
+    "چه تاریخیه",
+    "چه تاریخی است",
+    "what time is it",
+    "what is the time",
+    "current time",
+    "time in tehran",
 )
 
 CASUAL_CHAT_PREFIXES = (
@@ -168,14 +189,14 @@ def resolve_search_intent(text: str) -> tuple[SearchDecision, str]:
     if has_url(raw):
         return SearchDecision.MUST_SEARCH, "url_supplied"
 
-    # 2. Clock query → clock tool handles it directly, no search
-    if any(clock in norm for clock in CLOCK_PATTERNS):
-        return SearchDecision.NO_SEARCH, "clock_question"
-
-    # 3. Explicit user request → MUST_SEARCH (Hard Rule, no heuristics can override)
+    # 2. Explicit user request → MUST_SEARCH (Hard Rule, no heuristics or clock can override)
     for trigger in EXPLICIT_SEARCH_TRIGGERS:
         if trigger in norm:
             return SearchDecision.MUST_SEARCH, f"explicit_user_request:{trigger}"
+
+    # 3. Clock query → clock tool handles it directly, no search
+    if any(clock in norm for clock in CLOCK_PATTERNS):
+        return SearchDecision.NO_SEARCH, "clock_question"
 
     # 4. Time-sensitive / financial / breaking news → MUST_SEARCH
     for trigger in TIME_SENSITIVE_TRIGGERS:

@@ -242,7 +242,11 @@ async def call_noya_api(
         "[NOYA-TIMING] ▶ START call_noya_api session=%s speaker_id=%s question=%r agent=%s",
         session_id, speaker_user_id, (question or "")[:60], use_agent,
     )
-    if is_clock_question(question):
+    # ── Precedence: Search / URL intent overrides clock short-circuit ──
+    from botapp.web import resolve_search_intent, SearchDecision
+    decision, _ = resolve_search_intent(question or "")
+
+    if decision != SearchDecision.MUST_SEARCH and is_clock_question(question):
         dt = (monotonic() - t0) * 1000
         logger.info("[NOYA-TIMING] ⏱ Clock direct response in %.1fms", dt)
         return format_clock_reply(), {}

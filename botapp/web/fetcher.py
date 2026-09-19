@@ -1,7 +1,9 @@
 """Secure asynchronous web page fetcher with SSRF protection and redirect validation."""
 from __future__ import annotations
 
+import asyncio
 import logging
+import re
 from typing import Any
 from urllib.parse import urljoin
 
@@ -10,7 +12,7 @@ import httpx
 from .errors import BlockedURLError, WebFetchError
 from .extractor import ContentExtractor
 from .models import WebDocument
-from .security import validate_url_security
+from .security import SafeNetworkBackend, validate_url_security
 
 logger = logging.getLogger(__name__)
 
@@ -39,10 +41,22 @@ class StaticFetcher:
         self.max_redirects = max_redirects
         self.max_bytes = max_bytes
         self._client: httpx.AsyncClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def get_client(self) -> httpx.AsyncClient:
         """Get or initialize reusable HTTP client with connection pooling."""
-        if self._client is None or self._client.is_closed:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if (
+            self._client is None
+            or self._client.is_closed
+            or (self._loop is not None and current_loop is not None and self._loop != current_loop)
+        ):
+            self._client = None
+            self._loop = current_loop
             headers = {
                 "User-Agent": (
                     "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
@@ -58,10 +72,15 @@ class StaticFetcher:
                 read=self.read_timeout,
             )
             limits = httpx.Limits(max_keepalive_connections=20, max_connections=50)
+            transport = httpx.AsyncHTTPTransport(limits=limits)
+            # Intercept socket connection to enforce DNS rebinding protection
+            pool = getattr(transport, "_pool", None)
+            if pool is not None:
+                setattr(pool, "_network_backend", SafeNetworkBackend())
             self._client = httpx.AsyncClient(
+                transport=transport,
                 headers=headers,
                 timeout=timeout,
-                limits=limits,
                 follow_redirects=False,  # Redirects manually validated for SSRF
             )
         return self._client
@@ -133,12 +152,23 @@ class StaticFetcher:
 
                     raw_bytes = b"".join(body_chunks)
 
-                    # Determine encoding
-                    encoding = resp.encoding or "utf-8"
+                    # Determine encoding with meta-tag fallback and BOM stripping
+                    encoding = resp.encoding
+                    if not encoding or encoding.lower() in ("iso-8859-1", "ascii"):
+                        m_enc = re.search(
+                            r'<meta[^>]+charset=["\']?([a-zA-Z0-9_-]+)',
+                            raw_bytes[:2048].decode("ascii", errors="ignore"),
+                            re.IGNORECASE,
+                        )
+                        if m_enc:
+                            encoding = m_enc.group(1)
+                    if not encoding:
+                        encoding = "utf-8"
+
                     try:
-                        html_text = raw_bytes.decode(encoding, errors="replace")
-                    except Exception:
-                        html_text = raw_bytes.decode("utf-8", errors="replace")
+                        html_text = raw_bytes.decode(encoding, errors="replace").lstrip("\ufeff")
+                    except (LookupError, UnicodeDecodeError):
+                        html_text = raw_bytes.decode("utf-8", errors="replace").lstrip("\ufeff")
 
                     # Extract structured document
                     doc = ContentExtractor.extract(

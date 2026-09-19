@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import random
+import re
 from html import unescape
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlparse
@@ -72,9 +73,21 @@ class DuckDuckGoProvider(SearchProvider):
         self.timeout = timeout
         self.max_retries = max_retries
         self._client: httpx.AsyncClient | None = None
+        self._loop: asyncio.AbstractEventLoop | None = None
 
     async def get_client(self) -> httpx.AsyncClient:
-        if self._client is None or self._client.is_closed:
+        try:
+            current_loop = asyncio.get_running_loop()
+        except RuntimeError:
+            current_loop = None
+
+        if (
+            self._client is None
+            or self._client.is_closed
+            or (self._loop is not None and current_loop is not None and self._loop != current_loop)
+        ):
+            self._client = None
+            self._loop = current_loop
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.timeout, connect=4.0),
                 follow_redirects=True,
@@ -107,7 +120,13 @@ class DuckDuckGoProvider(SearchProvider):
                 else:
                     await asyncio.sleep(0.5 + random.uniform(0.1, 0.4))
 
-        # Fallback 1: DuckDuckGo Instant Answer API
+        # Fallback 1: DuckDuckGo Instant Answer API (suitable for conceptual queries)
+        is_live_query = bool(re.search(
+            r"(?:قیمت|نرخ|دلار|سکه|طلا|ارز|بیت\s*کوین|bitcoin|crypto|release|news|اخبار|جدیدترین|آخرین|امروز|الان|وضعیت|status|ورژن|نسخه|live|current)",
+            query,
+            re.IGNORECASE,
+        ))
+
         try:
             results = await self._search_instant_api(client, query, limit)
             if results:
@@ -115,13 +134,14 @@ class DuckDuckGoProvider(SearchProvider):
         except Exception as exc:
             logger.warning("DDG instant API failed: %s", exc)
 
-        # Fallback 2: Wikipedia OpenSearch API
-        try:
-            results = await self._search_wikipedia_api(client, query, limit)
-            if results:
-                return results
-        except Exception as exc:
-            logger.warning("Wikipedia API fallback failed: %s", exc)
+        # Fallback 2: Wikipedia OpenSearch API (ONLY for general/encyclopedic queries, NEVER for live news/prices/releases!)
+        if not is_live_query:
+            try:
+                results = await self._search_wikipedia_api(client, query, limit)
+                if results:
+                    return results
+            except Exception as exc:
+                logger.warning("Wikipedia API fallback failed: %s", exc)
 
         return []
 

@@ -51,15 +51,24 @@ async def _web_search(query: str = "") -> str:
     return "\n\n".join(lines)
 
 
-async def _fetch_url(url: str = "") -> str:
+async def _fetch_url(url: str = "", query: str = "") -> str:
     from botapp.web import default_web_service
+    from botapp.web.evidence import EvidenceBuilder
+
     target = (url or "").strip()
     if not target:
         return "لطفاً آدرس لینک را وارد کنید."
     try:
         doc = await default_web_service.fetch_page(target)
         header = f"عنوان صفحه: {doc.title}\nآدرس: {doc.final_url}\n"
-        body = doc.text[:8000]
+        if len(doc.text) <= 8000:
+            body = doc.text
+        else:
+            best_chunks = EvidenceBuilder.select_best_chunks(doc, query=query, max_chunks=5)
+            if best_chunks:
+                body = "\n\n---\n\n".join(f"[بخش {c.source_id}]:\n{c.text}" for c in best_chunks)
+            else:
+                body = doc.text[:8000]
         return f"{header}\n{body}" if body else "صفحه خالی بود."
     except Exception as exc:
         return f"خطا در باز کردن لینک: {exc}"

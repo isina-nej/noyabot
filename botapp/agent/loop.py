@@ -8,6 +8,7 @@ from __future__ import annotations
 import json
 import logging
 import os
+import re
 from typing import Any
 
 import httpx
@@ -171,7 +172,8 @@ async def run_agent_loop(
 
             # ── Loop & Budget Deduplication Guards ──
             if tool_name == "web_search":
-                q = (args.get("query") or "").strip().casefold()
+                raw_q = (args.get("query") or "").strip()
+                q = re.sub(r"\s+", " ", raw_q).casefold()
                 if q in seen_search_queries:
                     result = "این جستجو قبلاً با همین عبارت انجام شده است؛ لطفاً بر اساس اطلاعات بالا پاسخ را ادامه دهید."
                 elif search_count >= MAX_SEARCHES:
@@ -181,7 +183,8 @@ async def run_agent_loop(
                     search_count += 1
                     result = await registry.dispatch_async(tool_name, args)
             elif tool_name == "fetch_url":
-                u = (args.get("url") or "").strip().rstrip("/")
+                from botapp.web.ranking import canonicalize_url
+                u = canonicalize_url(args.get("url") or "")
                 if u in seen_fetch_urls:
                     result = "این صفحه قبلاً دریافت شده است؛ لطفاً از محتوای بالا استفاده کنید."
                 elif fetch_count >= MAX_FETCHES:
