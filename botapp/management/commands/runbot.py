@@ -1298,7 +1298,8 @@ async def _handle_noya_image_edit(message: Message, instruction: str, image_data
         await progress.edit_text("متأسفانه نتونستم عکس رو ویرایش کنم. لطفاً دوباره امتحان کن.")
         return
     try:
-        photo = BufferedInputFile(edited_bytes, filename="noya_edit.png")
+        ext = "jpg" if edited_bytes.startswith(b"\xff\xd8") else "png"
+        photo = BufferedInputFile(edited_bytes, filename=f"noya_edit.{ext}")
         caption = f"بفرما! ✏️\n<blockquote>{escape(instruction[:120])}</blockquote>"
         await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
         try:

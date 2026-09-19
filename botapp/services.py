@@ -1,6 +1,7 @@
 import logging
 import os
 import re
+from typing import Any
 from time import monotonic
 from collections import defaultdict, deque
 from datetime import timedelta
@@ -329,7 +330,7 @@ async def _translate_prompt_for_image(prompt: str) -> str:
                 base_url,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
                 json={
-                    "model": "fast",
+                    "model": os.getenv("NOYA_MODEL", "FastText"),
                     "messages": [
                         {"role": "system", "content": "You are a prompt translator. Convert the user's Persian image description into a detailed, vivid English prompt suitable for AI image generation (Stable Diffusion / Flux). Output ONLY the English prompt, nothing else. Add artistic quality keywords like 'highly detailed, professional, 4k, cinematic lighting' when appropriate."},
                         {"role": "user", "content": prompt},
@@ -339,7 +340,12 @@ async def _translate_prompt_for_image(prompt: str) -> str:
                 },
             )
             resp.raise_for_status()
-            en = resp.json()["choices"][0]["message"]["content"].strip()
+            try:
+                data = resp.json()
+            except Exception:
+                from botapp.agent.loop import _parse_sse_stream
+                data = _parse_sse_stream(resp.text) or {}
+            en = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
             logger.info("[NOYA-TIMING] 🔤 Prompt translation %.1fms: %r → %r", (monotonic() - t0) * 1000, prompt, en[:100])
             return en if en else prompt
     except Exception:
@@ -400,6 +406,54 @@ async def generate_noya_image(prompt: str) -> bytes | None:
     return None
 
 
+def _extract_image_bytes(content: Any) -> bytes | None:
+    """Extract decoded image binary bytes from multimodal response or text with base64."""
+    import base64 as b64mod
+    import re
+
+    if isinstance(content, list):
+        for part in content:
+            if isinstance(part, dict):
+                url = part.get("image_url", {}).get("url", "") or part.get("url", "")
+                if "base64," in url:
+                    b64_str = url.split("base64,", 1)[1].split(")", 1)[0].strip()
+                    try:
+                        dec = b64mod.b64decode(b64_str)
+                        if dec.startswith((b"\xff\xd8", b"\x89PNG", b"GIF", b"RIFF")):
+                            return dec
+                    except Exception:
+                        pass
+                data = part.get("inline_data", {}).get("data") or part.get("source", {}).get("data")
+                if data:
+                    try:
+                        dec = b64mod.b64decode(data)
+                        if dec.startswith((b"\xff\xd8", b"\x89PNG", b"GIF", b"RIFF")):
+                            return dec
+                    except Exception:
+                        pass
+
+    if isinstance(content, str):
+        # 1. Regex for data:image/...;base64,<data>
+        m = re.search(r"data:image/[^;]+;base64,([A-Za-z0-9+/=]+)", content)
+        if m:
+            try:
+                dec = b64mod.b64decode(m.group(1))
+                if dec.startswith((b"\xff\xd8", b"\x89PNG", b"GIF", b"RIFF")):
+                    return dec
+            except Exception:
+                pass
+        # 2. Extract longest base64 sequence from string
+        matches = re.findall(r"[A-Za-z0-9+/=]{100,}", content)
+        for b64_cand in matches:
+            try:
+                dec = b64mod.b64decode(b64_cand)
+                if dec.startswith((b"\xff\xd8", b"\x89PNG", b"GIF", b"RIFF")):
+                    return dec
+            except Exception:
+                pass
+    return None
+
+
 async def edit_noya_image(instruction: str, image_data: bytes, image_mime: str = "image/jpeg") -> bytes | None:
     """Edit an image via Gemini vision model: send image + edit instruction, get new image back."""
     api_key = os.getenv("NOYA_API_KEY", "").strip()
@@ -433,43 +487,24 @@ async def edit_noya_image(instruction: str, image_data: bytes, image_mime: str =
             resp = await client.post(base_url, headers=headers, json=payload)
             resp.raise_for_status()
             logger.info("[NOYA-TIMING] ✏️ Image edit took %.1fms", (monotonic() - t0) * 1000)
-            data = resp.json()
-            # Gemini image models return inline_data in content parts
+            try:
+                data = resp.json()
+            except Exception:
+                from botapp.agent.loop import _parse_sse_stream
+                data = _parse_sse_stream(resp.text) or {}
+
             choices = data.get("choices") or []
             if not choices:
-                logger.warning("Image edit returned no choices")
+                logger.warning("Image edit returned no choices: %s", resp.text[:200])
                 return None
             msg = choices[0].get("message", {})
             content = msg.get("content", "")
-            # Check if content is a list of parts (multimodal response)
-            if isinstance(content, list):
-                for part in content:
-                    if isinstance(part, dict):
-                        # OpenAI-style: {"type": "image_url", "image_url": {"url": "data:..."}}
-                        if part.get("type") == "image_url":
-                            url = part.get("image_url", {}).get("url", "")
-                            if url.startswith("data:"):
-                                b64_str = url.split(",", 1)[1] if "," in url else ""
-                                if b64_str:
-                                    return b64mod.b64decode(b64_str)
-                        # Gemini-style: {"type": "image", "source": {"data": "...", "media_type": "..."}}
-                        if part.get("type") == "image":
-                            src = part.get("source", {})
-                            b64_str = src.get("data", "")
-                            if b64_str:
-                                return b64mod.b64decode(b64_str)
-                        # inline_data style
-                        inline = part.get("inline_data", {})
-                        if inline.get("data"):
-                            return b64mod.b64decode(inline["data"])
-            # Fallback: maybe the model returned a text response with base64
-            if isinstance(content, str) and len(content) > 1000:
-                # Could be raw base64
-                try:
-                    return b64mod.b64decode(content)
-                except Exception:
-                    pass
-            logger.warning("Image edit: model returned text instead of image: %s", str(content)[:200])
+
+            img_bytes = _extract_image_bytes(content)
+            if img_bytes:
+                return img_bytes
+
+            logger.warning("Image edit: model returned unparseable content: %s", str(content)[:200])
             return None
     except Exception:
         logger.exception("Noya image edit failed instruction=%s", en_instruction[:80])
