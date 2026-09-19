@@ -32,6 +32,7 @@ from botapp.services import (
     call_ai_api as request_ai_answer,
     call_noya_api,
     generate_noya_image,
+    generate_noya_tts,
     edit_noya_image,
     clear_warnings,
     contains_blocked_word,
@@ -1318,6 +1319,65 @@ async def draw_command(message: Message, command: CommandObject):
     await _handle_noya_image_generation(message, prompt_text)
 
 
+# ---------- TTS (Voice) ----------
+
+_VOICE_TRIGGER_RE = re.compile(
+    # «ویس بگو X» / «با صدا بخون X» / «صوتی X» / «ویس X»
+    r"^(?:لطفاً\s+|لطفا\s+)?(?:با\s+)?(?:صدا|صوت|صوتی|ویس|ویسی|وویس|voice)\s+(?:بگو|بخون|بده|بفرست|بنویس)\s+(.+)"
+    # «ویس/صدا/voice : X» or «ویس X» (keyword then text, optional colon)
+    r"|^(?:لطفاً\s+|لطفا\s+)?(?:با\s+)?(?:صدا|صوت|صوتی|ویس|ویسی|وویس|voice)\s*[:،\-]\s*(.+)"
+    # «X رو ویس بده» / «X رو ویس کن»
+    r"|^(.+?)\s+(?:رو\s+)?(?:ویس|صوتی|voice)\s*(?:کن|بده|بفرست|بگو|بخون)[!؟?\s]*$",
+    re.IGNORECASE,
+)
+
+
+def extract_voice_text(text: str) -> str | None:
+    """Return the text to be spoken if user is requesting TTS; else None."""
+    t = (text or "").strip()
+    match = _VOICE_TRIGGER_RE.match(t)
+    if match:
+        for g in match.groups():
+            if g and g.strip():
+                return g.strip()
+    return None
+
+
+async def _handle_noya_tts(message: Message, text: str, *, as_noya: bool = True) -> None:
+    """Generate TTS and send as voice message."""
+    text_clean = (text or "").strip()
+    if not text_clean:
+        await message.reply("لطفاً متنی رو که می‌خوای با صدا بگم بنویس.")
+        return
+    if message.bot:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="record_voice")
+    progress = await message.reply("دارم ضبط می‌کنم… 🎙️")
+    audio_bytes = await generate_noya_tts(text_clean, as_noya=as_noya)
+    if not audio_bytes:
+        await progress.edit_text("متأسفانه نتونستم ویس بسازم. لطفاً دوباره امتحان کن.")
+        return
+    try:
+        voice_file = BufferedInputFile(audio_bytes, filename="noya_voice.mp3")
+        caption = f"🎙️ <blockquote>{escape(text_clean[:120])}</blockquote>"
+        await message.reply_voice(voice=voice_file, caption=caption, parse_mode="HTML")
+        try:
+            await progress.delete()
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("Failed sending TTS voice to chat=%s", message.chat.id)
+        await progress.edit_text("ویس ساخته شد ولی در ارسال خطایی پیش اومد.")
+
+
+@router.message(Command("voice", "ویس", "صدا", "tts"))
+async def voice_command(message: Message, command: CommandObject):
+    text = action_reason(command)
+    if not text:
+        await message.reply("استفاده: /voice متن\nمثلاً: /voice سلام! حالت خوبه؟")
+        return
+    await _handle_noya_tts(message, text)
+
+
 @router.message(Command("new"))
 async def new_chat(message: Message, bot: Bot):
     chat = message.chat
@@ -1716,6 +1776,11 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     img_prompt = extract_image_prompt(ask)
     if img_prompt and not images:
         await _handle_noya_image_generation(message, img_prompt)
+        return
+    # TTS: detect voice request in natural language
+    voice_text = extract_voice_text(ask)
+    if voice_text:
+        await _handle_noya_tts(message, voice_text)
         return
     # Image edit: user replies to an image with edit instructions
     reply_has_image = bool(images and any(i.get("source") in ("reply", "reply_parent") for i in images))

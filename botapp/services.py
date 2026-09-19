@@ -504,3 +504,136 @@ async def call_ai_api(
 
     content = data.get("content") if isinstance(data, dict) else None
     return content if isinstance(content, str) and content.strip() else "پاسخی دریافت نشد."
+
+
+# ---------- Noya TTS (Text-to-Speech via 9Router) ----------
+
+_NOYA_TTS_PROMPT = """\
+Generate speech audio from the transcript below.
+Do not read the instructions or section headings aloud.
+
+# AUDIO PROFILE
+Name: Noya
+Role: Casual Persian conversational personality
+
+Personality:
+Playful, cheerful, warm, expressive, confident and mischievous.
+
+# THE SCENE
+Noya is casually chatting with a close friend through voice messages.
+The atmosphere is relaxed, playful and informal.
+
+# DIRECTOR'S NOTES
+
+Style:
+Use a playful, warm and expressive conversational delivery.
+Maintain a subtle vocal smile.
+Sound naturally amused when teasing.
+Keep the performance spontaneous rather than theatrical.
+
+Pacing:
+Use a medium-fast conversational pace.
+Use short natural pauses.
+Allow speed to change naturally according to emotion.
+Slow down slightly for emphasis.
+
+Accent:
+Use natural contemporary conversational Persian from Tehran.
+Avoid formal broadcast-style pronunciation.
+
+Articulation:
+Keep speech clear but conversational.
+Avoid excessive enunciation.
+Use natural connected speech.
+
+Breathing:
+Keep breathing subtle and natural.
+
+Dynamics:
+Use natural changes in energy and emphasis.
+Increase energy slightly for excited reactions.
+Avoid unnecessary shouting.
+
+# SAMPLE CONTEXT
+Noya is responding to a close friend's message.
+She feels comfortable and is lightly teasing them.
+
+# TRANSCRIPT
+"""
+
+
+async def generate_noya_tts(text: str, *, as_noya: bool = True) -> bytes | None:
+    """Convert text to speech via 9Router /v1/audio/speech.
+
+    When ``as_noya`` is True the full Noya audio-profile prompt wraps the
+    transcript for expressive, in-character delivery.  Otherwise the raw text
+    is sent for a neutral read.
+
+    Returns MP3 bytes on success, None on failure.
+    """
+    api_key = os.getenv("NOYA_API_KEY", "").strip()
+    if not api_key:
+        logger.error("NOYA_API_KEY not configured for TTS")
+        return None
+
+    base_url = os.getenv("NOYA_API_URL", "http://127.0.0.1:20128/v1/chat/completions").strip()
+    if "/chat/completions" in base_url:
+        tts_url = base_url.replace("/chat/completions", "/audio/speech")
+    else:
+        tts_url = base_url.rstrip("/") + "/audio/speech"
+
+    model = os.getenv("NOYA_TTS_MODEL", "gemini/gemini-3.1-flash-tts-preview/Zephyr").strip()
+
+    if as_noya:
+        # Wrap with the full Noya audio-profile prompt
+        input_text = _NOYA_TTS_PROMPT + text.strip()
+    else:
+        input_text = text.strip()
+
+    # ponytail: 4000 bytes Cloud TTS limit per field; truncate if needed
+    max_bytes = 7500
+    if len(input_text.encode("utf-8")) > max_bytes:
+        while len(input_text.encode("utf-8")) > max_bytes and len(input_text) > 100:
+            input_text = input_text[: len(input_text) - 50]
+        input_text = input_text.rstrip() + "…"
+
+    headers = {
+        "Authorization": f"Bearer {api_key}",
+        "Content-Type": "application/json",
+    }
+    payload = {
+        "model": model,
+        "input": input_text,
+    }
+
+    try:
+        t0 = monotonic()
+        async with httpx.AsyncClient(timeout=60.0) as client:
+            resp = await client.post(tts_url, headers=headers, json=payload)
+            resp.raise_for_status()
+            content_type = resp.headers.get("content-type", "")
+            elapsed = (monotonic() - t0) * 1000
+            if "audio" in content_type or "octet-stream" in content_type:
+                logger.info(
+                    "[NOYA-TIMING] 🔊 TTS took %.1fms (bytes=%d, model=%s)",
+                    elapsed, len(resp.content), model,
+                )
+                return resp.content
+            # Might be JSON with base64
+            try:
+                data = resp.json()
+                import base64
+                audio_b64 = data.get("audio") or data.get("data", [{}])[0].get("b64_json", "")
+                if audio_b64:
+                    logger.info("[NOYA-TIMING] 🔊 TTS (b64) took %.1fms", elapsed)
+                    return base64.b64decode(audio_b64)
+            except Exception:
+                pass
+            logger.warning("TTS unexpected content-type=%s body=%s", content_type, resp.text[:200])
+            return None
+    except httpx.TimeoutException:
+        logger.warning("[NOYA-TIMING] ⚠️ TTS timed out")
+        return None
+    except Exception:
+        logger.exception("TTS generation failed")
+        return None
