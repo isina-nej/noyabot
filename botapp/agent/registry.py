@@ -96,7 +96,16 @@ def register_tool(name, description, *, input_schema=None, parameters=None,
                    requires_confirmation=True, human_verb=None,
                    handler=None, emoji="🔧", **extra):
     """Convenience wrapper used by botapp.agent_tools.*"""
-    params = parameters or input_schema or {"type": "object", "properties": {}}
+    # Convert Pydantic model class/instance to JSON-serializable dict
+    raw = input_schema or parameters or {"type": "object", "properties": {}}
+    if hasattr(raw, "model_json_schema"):
+        params = raw.model_json_schema()
+    elif hasattr(raw, "schema"):
+        params = raw.schema()
+    elif isinstance(raw, dict):
+        params = raw
+    else:
+        params = {"type": "object", "properties": {}}
     tool = Tool(name=name, description=description, parameters=params,
                 handler=handler, emoji=emoji)
     tool.requires_confirmation = requires_confirmation
