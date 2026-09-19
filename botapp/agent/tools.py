@@ -44,11 +44,9 @@ async def _web_search(query: str = "") -> str:
 
 
 async def _fetch_url(url: str = "") -> str:
-    import httpx
-    async with httpx.AsyncClient(timeout=15, follow_redirects=True) as client:
-        resp = await client.get(url, headers={"User-Agent": "Mozilla/5.0"})
-        resp.raise_for_status()
-        return _strip_html(resp.text)[:4000]
+    from botapp.services import fetch_url_content
+    content = await fetch_url_content(url, max_chars=8000)
+    return content if content else "محتوای صفحه قابل دریافت نبود."
 
 
 def _get_time(**_extra) -> str:
