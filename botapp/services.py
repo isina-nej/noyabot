@@ -269,6 +269,24 @@ async def call_noya_api(
     else:
         logger.info("[NOYA-TIMING] 🔍 Web search skipped/empty in %.1fms", search_ms)
 
+    # Web page extract (Hermes-style): if user or replied message shared a URL, fetch its content
+    urls = extract_urls(question)
+    if not urls:
+        # Check if question came from a payload with replied message
+        urls = extract_urls(session_id)  # fallback
+    if urls:
+        first_url = urls[0]
+        logger.info("[NOYA-AGENT] 🌐 Extracting page content: %s", first_url[:60])
+        t_fetch = monotonic()
+        page_content = await fetch_url_content(first_url)
+        fetch_ms = (monotonic() - t_fetch) * 1000
+        logger.info("[NOYA-AGENT] 🌐 Page extracted in %.1fms (chars=%d)", fetch_ms, len(page_content))
+        url_block = f"[WEB_PAGE_CONTENT url={first_url}]\n{page_content}\n[/WEB_PAGE_CONTENT]"
+        if search_block:
+            search_block = f"{search_block}\n\n{url_block}"
+        else:
+            search_block = url_block
+
     payload = {
         "model": model,
         "stream": False,
@@ -637,3 +655,65 @@ async def generate_noya_tts(text: str, *, as_noya: bool = True) -> bytes | None:
     except Exception:
         logger.exception("TTS generation failed")
         return None
+
+
+# ---------- Web Page Content Fetcher (like Hermes web_extract) ----------
+
+_STRIP_TAGS_RE = re.compile(r"<(script|style|nav|footer|header|noscript)[^>]*>.*?</\1>", re.DOTALL | re.IGNORECASE)
+_TAG_RE = re.compile(r"<[^>]+>")
+
+
+async def fetch_url_content(url: str, *, max_chars: int = 4000) -> str:
+    """Fetch a web page and return clean readable text content.
+
+    Strips scripts, styles, navigation, footers and HTML tags.
+    """
+    cleaned_url = url.strip().rstrip(".,!?;:،؛»\"')]")
+    if not cleaned_url.startswith(("http://", "https://")):
+        cleaned_url = f"https://{cleaned_url}"
+
+    headers = {
+        "User-Agent": (
+            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
+            "AppleWebKit/537.36 (KHTML, like Gecko) "
+            "Chrome/126.0.0.0 Safari/537.36"
+        ),
+        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
+        "Accept-Language": "fa,en;q=0.8",
+    }
+
+    try:
+        t0 = monotonic()
+        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
+            resp = await client.get(cleaned_url)
+            resp.raise_for_status()
+
+            # Only process HTML/text
+            ct = resp.headers.get("content-type", "").lower()
+            if "text" not in ct and "html" not in ct and "json" not in ct:
+                return f"[محتوای غیر متنی: {ct}]"
+
+            html = resp.text
+            # Strip non-content blocks
+            html = _STRIP_TAGS_RE.sub(" ", html)
+            # Strip remaining tags
+            text = _TAG_RE.sub(" ", html)
+            # Normalize whitespace
+            from html import unescape
+            text = unescape(text)
+            text = re.sub(r"[ \t]+", " ", text)
+            text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
+
+            elapsed = (monotonic() - t0) * 1000
+            logger.info("[NOYA-TIMING] 🌐 Fetched %s in %.1fms (chars=%d)", cleaned_url[:60], elapsed, len(text))
+
+            if len(text) > max_chars:
+                text = text[:max_chars] + "\n…[ادامه محتوا کوتاه شد]"
+
+            return text if text else "[صفحه خالی بود]"
+    except httpx.TimeoutException:
+        logger.warning("Fetch URL timeout: %s", cleaned_url[:60])
+        return "[خطا: زمان بارگذاری صفحه تمام شد]"
+    except Exception as exc:
+        logger.warning("Fetch URL failed: %s error=%s", cleaned_url[:60], exc)
+        return f"[خطا در باز کردن لینک: {exc}]"
