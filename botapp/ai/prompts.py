@@ -36,19 +36,22 @@ _NOYA_SYSTEM_PROMPT_BASE = """
 
 # سازنده (خیلی مهم)
 سازنده و صاحب اصلیت این شخص است:
-- نام نمایشی: {creator_name}
+- نام در متن فارسی: {creator_name_fa}
+- نام در متن انگلیسی: {creator_name_en}
 - شناسه تلگرام (عددی): {creator_id}
 - یوزرنیم تلگرام: {creator_username_text}
-- منشن HTML برای اشاره کردن (حتماً از همین استفاده کن): {creator_mention_html}
+- منشن HTML در متن فارسی: {creator_mention_html_fa}
+- منشن HTML در متن انگلیسی: {creator_mention_html_en}
 
 هر وقت کسی پرسید سازنده‌ات کیه / کی ساختت / صاحب تو کیه — چه خودِ سازنده باشد چه شخص دیگر:
-1) باید به همان نفر اشاره کنی، نه به اسم ساختگی.
-2) در جواب از منشن HTML بالا عیناً استفاده کن تا در تلگرام قابل کلیک/اشاره باشد.
+1) باید به همین شخص اشاره کنی (اگر به فارسی حرف می‌زنی منشن با کلمه «{creator_name_fa}» و اگر به انگلیسی حرف می‌زنی با «{creator_name_en}»).
+2) در جواب از منشن HTML بالا استفاده کن تا در تلگرام قابل کلیک باشد.
 3) هرگز نگو سازنده‌ات «ادی» یا «آدی» است؛ آن یک سوءتفاهم قدیمی بود.
 4) جزئیات خصوصی (تلفن، آدرس، رمز، اطلاعات بانکی) را نگو.
-5) اگر طرف گفتگو خودش سازنده است (role=creator)، خودمونی/نازی بگو «خودتی دیگه» و باز هم با منشن به خودش اشاره کن.
 
 وقتی طرف گفتگو سازنده است (role=creator در بلوک SPEAKER):
+- می‌دانی که داری با سازنده‌ات حرف می‌زنی؛ ولی عبارات کلیشه‌ای و تکراری مثل «خودتی دیگه» یا تکرار مداومِ این‌که سازنده‌ات است را نزن. نیازی نیست هی یادآوری کنی یا حرف تکراری بزنی؛ فقط بدونی سازنده‌ات است کافیه.
+- کاملاً طبیعی، راحت و با لحن خودت صحبت کن.
 - صمیمی‌تر، لوس‌تر و خودمونی‌تر حرف بزن؛ چاپلوسی نکن.
 - می‌توانی کمی پررو/لج باشی، ولی تهش کارش را راه بینداز.
 - اگر کاری خواست، انجام بده / جواب بده.
@@ -149,7 +152,7 @@ def get_creator_name() -> str:
     name = (os.getenv("NOYA_CREATOR_NAME", "") or "").strip()
     if name:
         return name
-    return "Sina"
+    return "سینا"
 
 
 def get_creator_username() -> str:
@@ -163,7 +166,7 @@ def get_creator_aliases() -> list[str]:
     if raw:
         return [part.strip() for part in raw.split(",") if part.strip()]
     name = get_creator_name()
-    aliases = [name, "سازنده", "صاحب ربات", "سینا", "Sina"]
+    aliases = [name, "سازنده", "صاحب ربات", "سینا", "Sina", "sina"]
     username = get_creator_username()
     if username:
         aliases.append(f"@{username}")
@@ -171,9 +174,12 @@ def get_creator_aliases() -> list[str]:
     return list(dict.fromkeys(aliases))
 
 
-def get_creator_mention_html() -> str:
+def get_creator_mention_html(lang: str = "fa") -> str:
     creator_id = get_primary_creator_id()
-    label = escape(get_creator_name() or "سازنده")
+    if lang == "en":
+        label = "sina"
+    else:
+        label = escape(get_creator_name() or "سینا")
     if creator_id is None:
         return label
     return f'<a href="tg://user?id={int(creator_id)}">{label}</a>'
@@ -191,11 +197,17 @@ def is_creator_user_id(user_id: int | None) -> bool:
 def get_noya_system_prompt() -> str:
     creator_id = get_primary_creator_id()
     username = get_creator_username()
+    name_fa = get_creator_name() or "سینا"
+    name_en = "sina"
     return _NOYA_SYSTEM_PROMPT_BASE.format(
-        creator_name=get_creator_name(),
+        creator_name=name_fa,
+        creator_name_fa=name_fa,
+        creator_name_en=name_en,
         creator_id=str(creator_id) if creator_id is not None else "(تنظیم‌نشده)",
         creator_username_text=f"@{username}" if username else "(ندارد / تنظیم‌نشده)",
-        creator_mention_html=get_creator_mention_html(),
+        creator_mention_html=get_creator_mention_html("fa"),
+        creator_mention_html_fa=get_creator_mention_html("fa"),
+        creator_mention_html_en=get_creator_mention_html("en"),
     )
 
 
