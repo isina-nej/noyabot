@@ -1195,7 +1195,7 @@ async def prompt(message: Message, command: CommandObject):
 
     if chat.type == ChatType.PRIVATE:
         await message.bot.send_chat_action(chat_id=chat.id, action="typing")
-        answer = await run_ai_with_memory(
+        answer, _meta = await run_ai_with_memory(
             message,
             question,
             call_noya_api,
@@ -1216,7 +1216,7 @@ async def prompt(message: Message, command: CommandObject):
         return
 
     await message.bot.send_chat_action(chat_id=chat.id, action="typing")
-    answer = await run_ai_with_memory(
+    answer, _meta = await run_ai_with_memory(
         message,
         question,
         call_noya_api,
@@ -1842,7 +1842,7 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             await _handle_noya_image_edit(message, ask, reply_img["data"], reply_img.get("mime", "image/jpeg"))
             return
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    answer = await run_ai_with_memory(
+    answer, agent_metadata = await run_ai_with_memory(
         message,
         payload,
         call_noya_api,
@@ -1850,10 +1850,21 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         images=images or None,
     )
     t_reply = monotonic()
-    # --- Agent ACTION dispatch ---
-    handled = await _dispatch_ai_action(message, answer or "", images=images)
-    if not handled:
+    # --- Agent tool results (image/TTS from agent loop) ---
+    if agent_metadata.get("generated_image_b64"):
+        import base64
+        img_bytes = base64.b64decode(agent_metadata["generated_image_b64"])
+        await message.reply_photo(BufferedInputFile(img_bytes, filename="noya_image.png"), caption=answer or "")
+    elif agent_metadata.get("generated_tts_audio"):
+        # TTS audio already stored by tool handler; fetch it
+        from botapp.agent.tools import _TTS_RESULT_CACHE
+        # audio was already consumed by the tool, answer text is the reply
         await reply_noya_answer(message, answer)
+    else:
+        # --- Legacy ACTION dispatch (fallback for non-agent mode) ---
+        handled = await _dispatch_ai_action(message, answer or "", images=images)
+        if not handled:
+            await reply_noya_answer(message, answer)
     logger.info(
         "[NOYA-TIMING] 📤 Telegram reply finished for msg_id=%s in %.1fms (total_turn=%.1fms)",
         message.message_id,

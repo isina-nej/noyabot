@@ -69,7 +69,7 @@ async def channel_nouya_handler(message: types.Message):
         return
     images = await collect_noya_images(message.bot, message)
     progress = await message.reply("یک لحظه…")
-    answer = await call_noya_api(
+    answer, _meta = await call_noya_api(
         question,
         session_id=f"telegram:channel:{message.chat.id}:{message.message_id}",
         images=images or None,
@@ -95,7 +95,7 @@ async def guest_nouya_handler(message: types.Message):
         input_message_content=InputTextMessageContent(message_text="یک لحظه…"),
     )
     sent = await message.answer_guest_query(result=progress)
-    answer = await call_noya_api(
+    answer, _meta = await call_noya_api(
         question,
         session_id=f"telegram:guest:{message.chat.id}:{message.message_id}",
         images=images or None,
@@ -176,7 +176,7 @@ async def nouya_mention_handler(message: types.Message):
         )
         images = await collect_noya_images(message.bot, message)
         await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-        answer = await run_ai_with_memory(
+        answer, _meta = await run_ai_with_memory(
             message,
             payload,
             call_noya_api,

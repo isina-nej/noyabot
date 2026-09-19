@@ -1,102 +1,81 @@
-"""Central, allowlisted registry of agent tools.
-
-Only tools registered here can ever be executed. The AI receives a *derived*
-description of these tools and may only reference them by name; unknown tool
-names are rejected before any execution path runs.
-"""
-
+"""Hermes-style tool registry for Noya agent."""
 from __future__ import annotations
-
-from collections.abc import Callable
+import logging
 from dataclasses import dataclass, field
-from typing import Any
+from typing import Any, Callable
 
-from pydantic import BaseModel
-
-from .errors import UnknownTool
-from .risk import normalize_risk
+logger = logging.getLogger(__name__)
 
 
-@dataclass(frozen=True)
-class AgentTool:
+@dataclass
+class Tool:
     name: str
     description: str
-    input_schema: type[BaseModel]
-    permission: str
-    risk_level: str
-    requires_confirmation: bool
-    handler: Callable[..., Any]
-    # Optional bot capability (see permissions.CAPABILITY_*) required to run.
-    capability: str | None = None
-    # How the target is resolved: "none", "member", "message".
-    target_kind: str = "none"
-    # Short Persian verb used in confirmation previews, e.g. "محدودکردن کاربر".
-    human_verb: str = ""
-    # AI may reference this tool. Read-only tools are usually deterministic-only
-    # but exposing them to the AI is harmless.
-    ai_selectable: bool = True
+    parameters: dict  # JSON Schema
+    handler: Callable[..., Any] = None
+    emoji: str = "🔧"
 
-    def validate_params(self, raw: dict[str, Any]) -> BaseModel:
-        from .errors import InvalidToolInput
-
-        try:
-            return self.input_schema.model_validate(raw or {})
-        except Exception as exc:  # pydantic ValidationError and friends
-            raise InvalidToolInput(
-                "❌ پارامترهای این دستور نامعتبر است."
-            ) from exc
+    def to_openai(self) -> dict:
+        return {
+            "type": "function",
+            "function": {
+                "name": self.name,
+                "description": self.description,
+                "parameters": self.parameters,
+            },
+        }
 
 
 class ToolRegistry:
-    def __init__(self) -> None:
-        self._tools: dict[str, AgentTool] = {}
+    """Singleton tool registry — mirrors tools/registry.py pattern."""
 
-    def register(self, tool: AgentTool) -> AgentTool:
-        if tool.name in self._tools:
-            raise ValueError(f"duplicate agent tool name: {tool.name}")
-        object.__setattr__(tool, "risk_level", normalize_risk(tool.risk_level))
+    def __init__(self):
+        self._tools: dict[str, Tool] = {}
+
+    def register(self, tool: Tool):
         self._tools[tool.name] = tool
-        return tool
+        logger.debug(f"Registered tool: {tool.emoji} {tool.name}")
 
-    def get(self, name: str) -> AgentTool:
-        tool = self._tools.get((name or "").strip())
-        if tool is None:
-            raise UnknownTool()
-        return tool
+    def get(self, name: str) -> Tool | None:
+        return self._tools.get(name)
 
-    def has(self, name: str) -> bool:
-        return (name or "").strip() in self._tools
+    def definitions(self) -> list[dict]:
+        return [t.to_openai() for t in self._tools.values()]
 
     def names(self) -> list[str]:
-        return sorted(self._tools)
+        return list(self._tools.keys())
 
-    def all(self) -> list[AgentTool]:
-        return [self._tools[name] for name in sorted(self._tools)]
-
-    def ai_catalog(self) -> list[dict[str, Any]]:
-        """Serialise the allowlist for the AI prompt.
-
-        Only names, descriptions and coarse metadata are exposed. Handlers,
-        schemas and internal policy are never sent to the model.
-        """
-        catalog = []
-        for tool in self.all():
-            if not tool.ai_selectable:
-                continue
-            catalog.append(
-                {
-                    "tool": tool.name,
-                    "description": tool.description,
-                    "risk_level": tool.risk_level,
-                    "target_kind": tool.target_kind,
-                }
-            )
-        return catalog
+    def dispatch(self, name: str, args: dict) -> str:
+        tool = self.get(name)
+        if not tool:
+            return f"Error: unknown tool '{name}'"
+        try:
+            result = tool.handler(**args)
+            if hasattr(result, "__await__"):
+                import asyncio
+                loop = asyncio.new_event_loop()
+                try:
+                    result = loop.run_until_complete(result)
+                finally:
+                    loop.close()
+            return str(result) if result is not None else "(no result)"
+        except Exception as e:
+            logger.exception(f"Tool {name} error")
+            return f"Error executing {name}: {type(e).__name__}: {e}"
 
 
-# Process-wide singleton. Tool modules populate it on import.
+# Global singleton
 registry = ToolRegistry()
 
 
-def register_tool(**kwargs: Any) -> AgentTool:
-    return registry.register(AgentTool(**kwargs))
+def register_tool(name, description, *, input_schema=None, parameters=None,
+                   requires_confirmation=True, human_verb=None,
+                   handler=None, emoji="🔧", **extra):
+    """Convenience wrapper used by botapp.agent_tools.*"""
+    params = parameters or input_schema or {"type": "object", "properties": {}}
+    tool = Tool(name=name, description=description, parameters=params,
+                handler=handler, emoji=emoji)
+    tool.requires_confirmation = requires_confirmation
+    tool.human_verb = human_verb
+    registry.register(tool)
+    return tool

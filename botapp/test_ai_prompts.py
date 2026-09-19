@@ -97,11 +97,12 @@ class NoyaSystemPromptAPITest(TestCase):
 
         with patch.dict(os.environ, {"NOYA_API_KEY": "test", "NOYA_CREATOR_IDS": "42", "NOYA_CREATOR_NAME": "Sina"}, clear=False):
             expected_prompt = get_noya_system_prompt()
-            async_to_sync(call_noya_api)(
+            result = async_to_sync(call_noya_api)(
                 "تست نویا",
                 "sess-123",
                 speaker_user_id=42,
                 speaker_name="Sina",
+                use_agent=False,
             )
             payload = mock_post.call_args.kwargs["json"]
             self.assertEqual(payload["messages"][0]["role"], "system")
@@ -165,7 +166,7 @@ class NoyaClockAndSearchTest(TestCase):
 
         with patch("botapp.services.httpx.AsyncClient") as client:
             result = async_to_sync(call_noya_api)("ساعت چنده", "telegram:1")
-        self.assertIn("تهران", result)
+        self.assertIn("تهران", result[0])
         client.assert_not_called()
 
     def test_image_prompt_extraction(self):

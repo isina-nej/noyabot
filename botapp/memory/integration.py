@@ -230,7 +230,6 @@ async def run_ai_with_memory(
             images=images,
         )
     except TypeError:
-        # Test doubles / older providers that only accept (question, session_id).
         try:
             answer = await provider(
                 enriched,
@@ -240,6 +239,11 @@ async def run_ai_with_memory(
             )
         except TypeError:
             answer = await provider(enriched, session_id)
+
+    # Handle tuple return from agent loop: (text, metadata)
+    agent_metadata = {}
+    if isinstance(answer, tuple):
+        answer, agent_metadata = answer[0], answer[1] if len(answer) > 1 else {}
     ai_request_ms = (time.perf_counter() - t1) * 1000
 
     ingestion_ms = 0
@@ -259,7 +263,7 @@ async def run_ai_with_memory(
         total_handler_ms,
     )
 
-    return answer
+    return answer, agent_metadata
 
 
 

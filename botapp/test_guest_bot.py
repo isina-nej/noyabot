@@ -55,7 +55,7 @@ class GuestBotTest(SimpleTestCase):
 
         with patch(
             "botapp.nouya_handler.call_noya_api",
-            new=AsyncMock(return_value="سلام، من نویا هستم."),
+            new=AsyncMock(return_value=("سلام، من نویا هستم.", {})),
         ) as call_ai:
             import asyncio
 
@@ -93,7 +93,7 @@ class GuestBotTest(SimpleTestCase):
         )
         with patch(
             "botapp.nouya_handler.call_noya_api",
-            new=AsyncMock(return_value="پاسخ کانال"),
+            new=AsyncMock(return_value=("پاسخ کانال", {})),
         ) as call_ai:
             import asyncio
 

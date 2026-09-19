@@ -538,9 +538,9 @@ class AiApiTest(TestCase):
     @patch.dict("os.environ", {}, clear=True)
     def test_noya_api_without_key_does_not_make_request(self):
         with patch("botapp.services.httpx.AsyncClient") as client:
-            result = async_to_sync(call_noya_api)("سلام", "telegram:1")
+            result = async_to_sync(call_noya_api)("سلام", "telegram:1", use_agent=False)
 
-        assert result == "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید."
+        assert result[0] == "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید."
         client.assert_not_called()
 
     @patch.dict(
@@ -564,9 +564,9 @@ class AiApiTest(TestCase):
         context.__aenter__.return_value = client
 
         with patch("botapp.services.httpx.AsyncClient", return_value=context):
-            result = async_to_sync(call_noya_api)("سلام", "telegram:1")
+            result = async_to_sync(call_noya_api)("سلام", "telegram:1", use_agent=False)
 
-        assert result == "پاسخ نویا"
+        assert result[0] == "پاسخ نویا"
         kwargs = client.post.await_args.kwargs
         assert kwargs["headers"]["Authorization"] == "Bearer test-key"
         assert kwargs["json"]["model"] == "test-model"

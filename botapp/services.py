@@ -233,97 +233,86 @@ async def call_noya_api(
     speaker_user_id: int | None = None,
     speaker_name: str = "",
     images: list[dict] | None = None,
-) -> str:
+    use_agent: bool = True,
+) -> tuple[str, dict]:
+    """Hermes-style: call agent loop with tools, fall back to direct API."""
     t0 = monotonic()
     logger.info(
-        "[NOYA-TIMING] ▶ START call_noya_api session=%s speaker_id=%s question=%r",
-        session_id,
-        speaker_user_id,
-        (question or "")[:60],
+        "[NOYA-TIMING] ▶ START call_noya_api session=%s speaker_id=%s question=%r agent=%s",
+        session_id, speaker_user_id, (question or "")[:60], use_agent,
     )
     if is_clock_question(question):
         dt = (monotonic() - t0) * 1000
         logger.info("[NOYA-TIMING] ⏱ Clock direct response in %.1fms", dt)
-        return format_clock_reply()
+        return format_clock_reply(), {}
 
+    # ── Agent loop (Hermes-style tool calling) ──
+    if use_agent:
+        from botapp.agent.loop import run_agent_loop
+        from botapp.ai.prompts import get_noya_system_prompt
+        t_agent = monotonic()
+        system_prompt = get_noya_system_prompt()
+        reply, metadata = await run_agent_loop(
+            question=question,
+            session_id=session_id,
+            system_prompt=system_prompt,
+        )
+        agent_ms = (monotonic() - t_agent) * 1000
+        total_ms = (monotonic() - t0) * 1000
+        logger.info(
+            "[NOYA-TIMING] 🤖 Agent loop done in %.1fms (total=%.1fms, tools=%s)",
+            agent_ms, total_ms, metadata.get("tools_used", []),
+        )
+        return reply, metadata
+
+    # ── Fallback: direct API call (old path) ──
+    return await _call_noya_api_direct(question, session_id, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images)
+
+
+async def _call_noya_api_direct(
+    question: str,
+    session_id: str,
+    *,
+    speaker_user_id: int | None = None,
+    speaker_name: str = "",
+    images: list[dict] | None = None,
+) -> tuple[str, dict]:
+    """Legacy direct API path — no tool calling, single LLM call."""
     api_key = os.getenv("NOYA_API_KEY", "").strip()
     if not api_key:
-        logger.error("[NOYA-TIMING] ❌ NOYA_API_KEY is not configured")
-        return "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید."
-
+        return "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید.", {}
     url = os.getenv("NOYA_API_URL", "http://127.0.0.1:20128/v1/chat/completions").strip()
-    # Prefer a vision-capable override when images are attached; NoyaBest already
-    # supports multimodal on the current 9router stack, so default stays NOYA_MODEL.
-    model = os.getenv("NOYA_MODEL", "TinkeraBot").strip()
+    model = os.getenv("NOYA_MODEL", "FastText").strip()
     if images:
         model = os.getenv("NOYA_VISION_MODEL", model).strip() or model
-    headers = {
-        "Authorization": f"Bearer {api_key}",
-        "Content-Type": "application/json",
-    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     t_search = monotonic()
     search_block = await maybe_web_search(question)
     search_ms = (monotonic() - t_search) * 1000
-    if search_block:
-        logger.info("[NOYA-TIMING] 🔍 Web search took %.1fms (content_len=%d)", search_ms, len(search_block))
-    else:
-        logger.info("[NOYA-TIMING] 🔍 Web search skipped/empty in %.1fms", search_ms)
-
-    # Web page extract (Hermes-style): if user or replied message shared a URL, fetch its content
+    logger.info("[NOYA-TIMING] 🔍 Search %.1fms", search_ms)
     urls = extract_urls(question)
-    if not urls:
-        # Check if question came from a payload with replied message
-        urls = extract_urls(session_id)  # fallback
     if urls:
-        first_url = urls[0]
-        logger.info("[NOYA-AGENT] 🌐 Extracting page content: %s", first_url[:60])
-        t_fetch = monotonic()
-        page_content = await fetch_url_content(first_url)
-        fetch_ms = (monotonic() - t_fetch) * 1000
-        logger.info("[NOYA-AGENT] 🌐 Page extracted in %.1fms (chars=%d)", fetch_ms, len(page_content))
-        url_block = f"[WEB_PAGE_CONTENT url={first_url}]\n{page_content}\n[/WEB_PAGE_CONTENT]"
-        if search_block:
-            search_block = f"{search_block}\n\n{url_block}"
-        else:
-            search_block = url_block
-
+        page_content = await fetch_url_content(urls[0])
+        url_block = f"[WEB_PAGE_CONTENT url={urls[0]}]\n{page_content}\n[/WEB_PAGE_CONTENT]"
+        search_block = f"{search_block}\n\n{url_block}" if search_block else url_block
     payload = {
-        "model": model,
-        "stream": False,
-        "messages": build_ai_messages(
-            question,
-            speaker_user_id=speaker_user_id,
-            speaker_name=speaker_name,
-            images=images,
-            search_block=search_block,
-        ),
+        "model": model, "stream": False,
+        "messages": build_ai_messages(question, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images, search_block=search_block),
     }
     t_ai = monotonic()
-    logger.info("[NOYA-TIMING] 🤖 Calling 9Router model=%s url=%s ...", model, url)
     try:
         async with httpx.AsyncClient(timeout=NOYA_API_TIMEOUT) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            data = response.json()
+            content = response.json()["choices"][0]["message"]["content"]
             ai_ms = (monotonic() - t_ai) * 1000
-            content = data["choices"][0]["message"]["content"]
-            total_ms = (monotonic() - t0) * 1000
-            logger.info(
-                "[NOYA-TIMING] 🤖 9Router replied in %.1fms (status=%s, chars=%d) | TOTAL API DURATION: %.1fms",
-                ai_ms,
-                response.status_code,
-                len(content),
-                total_ms,
-            )
-            return content
+            logger.info("[NOYA-TIMING] 🤖 Direct API %.1fms chars=%d", ai_ms, len(content))
+            return content, {}
     except httpx.TimeoutException:
-        ai_ms = (monotonic() - t_ai) * 1000
-        logger.warning("[NOYA-TIMING] ⚠️ Noya AI API request timed out after %.1fms (cap=%ss)", ai_ms, NOYA_API_TIMEOUT)
-        return "نویا این لحظه شلوغه و جواب نداد. یک دقیقه دیگه دوباره امتحان کن."
-    except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError):
-        ai_ms = (monotonic() - t_ai) * 1000
-        logger.exception("[NOYA-TIMING] ❌ Noya AI API request failed after %.1fms", ai_ms)
-        return "خطا در ارتباط با نویا. لطفاً دوباره تلاش کنید."
+        return "نویا این لحظه شلوغه و جواب نداد.", {}
+    except Exception:
+        logger.exception("[NOYA-TIMING] ❌ Direct API failed")
+        return "خطا در ارتباط با نویا.", {}
 
 
 async def _translate_prompt_for_image(prompt: str) -> str:
