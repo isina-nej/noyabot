@@ -356,7 +356,7 @@ async def generate_noya_image(prompt: str) -> bytes | None:
     # Translate Persian prompt to English for much better image quality
     en_prompt = await _translate_prompt_for_image(prompt)
 
-    model = os.getenv("NOYA_IMAGE_MODEL", "image").strip()
+    model = os.getenv("NOYA_IMAGE_MODEL", "ag/gemini-3.1-flash-image").strip()
     headers = {
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
@@ -365,7 +365,11 @@ async def generate_noya_image(prompt: str) -> bytes | None:
         "model": model,
         "prompt": en_prompt,
         "n": 1,
-        "size": "1024x1024",
+        "size": "auto",
+        "quality": "auto",
+        "background": "auto",
+        "image_detail": "high",
+        "output_format": "png",
     }
     try:
         t0 = monotonic()
