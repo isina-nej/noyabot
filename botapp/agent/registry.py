@@ -45,19 +45,43 @@ class ToolRegistry:
     def names(self) -> list[str]:
         return list(self._tools.keys())
 
-    def dispatch(self, name: str, args: dict) -> str:
+    def dispatch(self, name: str, args: dict) -> str | Any:
+        """Sync dispatch — returns str. For async handlers, use dispatch_async."""
         tool = self.get(name)
         if not tool:
             return f"Error: unknown tool '{name}'"
         try:
-            result = tool.handler(**args)
+            import inspect
+            sig = inspect.signature(tool.handler)
+            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                filtered = args
+            else:
+                valid = set(sig.parameters.keys()) - {'self'}
+                filtered = {k: v for k, v in args.items() if k in valid}
+            result = tool.handler(**filtered)
             if hasattr(result, "__await__"):
-                import asyncio
-                loop = asyncio.new_event_loop()
-                try:
-                    result = loop.run_until_complete(result)
-                finally:
-                    loop.close()
+                raise RuntimeError(f"Tool {name} is async — use dispatch_async()")
+            return str(result) if result is not None else "(no result)"
+        except Exception as e:
+            logger.exception(f"Tool {name} error")
+            return f"Error executing {name}: {type(e).__name__}: {e}"
+
+    async def dispatch_async(self, name: str, args: dict) -> str:
+        """Async dispatch — supports both sync and async handlers."""
+        tool = self.get(name)
+        if not tool:
+            return f"Error: unknown tool '{name}'"
+        try:
+            import inspect
+            sig = inspect.signature(tool.handler)
+            if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
+                filtered = args
+            else:
+                valid = set(sig.parameters.keys()) - {'self'}
+                filtered = {k: v for k, v in args.items() if k in valid}
+            result = tool.handler(**filtered)
+            if inspect.isawaitable(result):
+                result = await result
             return str(result) if result is not None else "(no result)"
         except Exception as e:
             logger.exception(f"Tool {name} error")

@@ -19,6 +19,57 @@ logger = logging.getLogger(__name__)
 MAX_ITERATIONS = 8  # safety cap — Hermes uses iteration_budget
 
 
+def _parse_sse_stream(raw: str) -> dict | None:
+    """Parse SSE stream response, reassemble chunks into a single message dict."""
+    import json as _json
+    message: dict = {"role": "assistant", "content": ""}
+    tool_calls_map: dict[int, dict] = {}
+    for line in raw.split("\n"):
+        line = line.strip()
+        if not line.startswith("data: "):
+            continue
+        payload = line[6:]
+        if payload == "[DONE]":
+            break
+        try:
+            chunk = _json.loads(payload)
+        except _json.JSONDecodeError:
+            continue
+        choices = chunk.get("choices", [])
+        if not choices:
+            continue
+        delta = choices[0].get("delta", {})
+        # content
+        c = delta.get("content")
+        if c:
+            message["content"] = (message.get("content") or "") + c
+        # reasoning (for thinking models)
+        rc = delta.get("reasoning_content")
+        if rc:
+            message["content"] = (message.get("content") or "") + rc
+        # tool calls
+        for tc_delta in delta.get("tool_calls", []):
+            idx = tc_delta.get("index", 0)
+            if idx not in tool_calls_map:
+                tool_calls_map[idx] = {
+                    "id": tc_delta.get("id", ""),
+                    "type": "function",
+                    "function": {"name": "", "arguments": ""},
+                }
+            tc = tool_calls_map[idx]
+            fn = tc_delta.get("function", {})
+            if fn.get("name"):
+                tc["function"]["name"] = fn["name"]
+            if fn.get("arguments"):
+                tc["function"]["arguments"] += fn["arguments"]
+            if tc_delta.get("id"):
+                tc["id"] = tc_delta["id"]
+
+    if tool_calls_map:
+        message["tool_calls"] = [tool_calls_map[i] for i in sorted(tool_calls_map)]
+    return {"choices": [{"message": message, "finish_reason": "stop"}]}
+
+
 async def run_agent_loop(
     question: str,
     session_id: str,
@@ -61,7 +112,10 @@ async def run_agent_loop(
 
         logger.info(f"[NOYA-AGENT] Iteration {iteration+1}, model={tool_model}, tools={len(tools)}")
 
-        async with httpx.AsyncClient(timeout=60) as client:
+        # Send request with explicit stream=false, but parse SSE anyway
+        # because some 9Router combos always return SSE
+        payload["stream"] = False
+        async with httpx.AsyncClient(timeout=120) as client:
             try:
                 resp = await client.post(api_url, json=payload, headers=headers)
                 resp.raise_for_status()
@@ -72,7 +126,18 @@ async def run_agent_loop(
                 logger.error(f"[NOYA-AGENT] Request error: {e}")
                 return "خطا در اتصال به هوش مصنوعی.", metadata
 
-        data = resp.json()
+        text = resp.text
+
+        # ── Parse response: try JSON first, then SSE stream ──
+        try:
+            data = resp.json()
+        except Exception:
+            # SSE stream format: "data: {json}\n\ndata: {json}\n\n..."
+            data = _parse_sse_stream(text)
+            if not data:
+                logger.error(f"[NOYA-AGENT] Empty/unparseable response: {text[:200]}")
+                return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
+
         choice = data.get("choices", [{}])[0]
         msg = choice.get("message", {})
         finish = choice.get("finish_reason", "")
@@ -99,7 +164,7 @@ async def run_agent_loop(
             logger.info(f"[NOYA-AGENT] 🔧 Calling tool: {tool_name}({args})")
             used_tools.append(tool_name)
 
-            result = registry.dispatch(tool_name, args)
+            result = await registry.dispatch_async(tool_name, args)
 
             # ── Handle special results via cache ──
             from botapp.agent.tools import _IMAGE_RESULT_CACHE, _TTS_RESULT_CACHE

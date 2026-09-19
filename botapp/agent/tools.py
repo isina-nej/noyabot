@@ -51,7 +51,7 @@ async def _fetch_url(url: str = "") -> str:
         return _strip_html(resp.text)[:4000]
 
 
-def _get_time() -> str:
+def _get_time(**_extra) -> str:
     now = datetime.now(TEHRAN_TZ)
     return now.strftime("%Y-%m-%d %H:%M:%S (%A)")
 
