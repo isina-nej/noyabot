@@ -100,6 +100,12 @@ async def run_agent_loop(
 
     metadata: dict[str, Any] = {}
     used_tools: list[str] = []
+    seen_search_queries: set[str] = set()
+    seen_fetch_urls: set[str] = set()
+    search_count = 0
+    fetch_count = 0
+    MAX_SEARCHES = 3
+    MAX_FETCHES = 6
 
     for iteration in range(MAX_ITERATIONS):
         payload: dict[str, Any] = {
@@ -162,9 +168,32 @@ async def run_agent_loop(
                 args = {}
 
             logger.info(f"[NOYA-AGENT] 🔧 Calling tool: {tool_name}({args})")
-            used_tools.append(tool_name)
 
-            result = await registry.dispatch_async(tool_name, args)
+            # ── Loop & Budget Deduplication Guards ──
+            if tool_name == "web_search":
+                q = (args.get("query") or "").strip().casefold()
+                if q in seen_search_queries:
+                    result = "این جستجو قبلاً با همین عبارت انجام شده است؛ لطفاً بر اساس اطلاعات بالا پاسخ را ادامه دهید."
+                elif search_count >= MAX_SEARCHES:
+                    result = "سقف تعداد جستجو در این مکالمه تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
+                else:
+                    seen_search_queries.add(q)
+                    search_count += 1
+                    result = await registry.dispatch_async(tool_name, args)
+            elif tool_name == "fetch_url":
+                u = (args.get("url") or "").strip().rstrip("/")
+                if u in seen_fetch_urls:
+                    result = "این صفحه قبلاً دریافت شده است؛ لطفاً از محتوای بالا استفاده کنید."
+                elif fetch_count >= MAX_FETCHES:
+                    result = "سقف تعداد دریافت صفحات وب تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
+                else:
+                    seen_fetch_urls.add(u)
+                    fetch_count += 1
+                    result = await registry.dispatch_async(tool_name, args)
+            else:
+                result = await registry.dispatch_async(tool_name, args)
+
+            used_tools.append(tool_name)
 
             # ── Handle special results via cache ──
             from botapp.agent.tools import _IMAGE_RESULT_CACHE, _TTS_RESULT_CACHE

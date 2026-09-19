@@ -687,57 +687,18 @@ _STRIP_TAGS_RE = re.compile(r"<(script|style|nav|footer|header|noscript)[^>]*>.*
 _TAG_RE = re.compile(r"<[^>]+>")
 
 
-async def fetch_url_content(url: str, *, max_chars: int = 4000) -> str:
-    """Fetch a web page and return clean readable text content.
-
-    Strips scripts, styles, navigation, footers and HTML tags.
-    """
-    cleaned_url = url.strip().rstrip(".,!?;:،؛»\"')]")
-    if not cleaned_url.startswith(("http://", "https://")):
-        cleaned_url = f"https://{cleaned_url}"
-
-    headers = {
-        "User-Agent": (
-            "Mozilla/5.0 (Windows NT 10.0; Win64; x64) "
-            "AppleWebKit/537.36 (KHTML, like Gecko) "
-            "Chrome/126.0.0.0 Safari/537.36"
-        ),
-        "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-        "Accept-Language": "fa,en;q=0.8",
-    }
-
+async def fetch_url_content(url: str, *, max_chars: int = 8000) -> str:
+    """Fetch a web page and return clean readable text content with SSRF safety and semantic parsing."""
+    from botapp.web import default_web_service
     try:
         t0 = monotonic()
-        async with httpx.AsyncClient(timeout=15.0, follow_redirects=True, headers=headers) as client:
-            resp = await client.get(cleaned_url)
-            resp.raise_for_status()
-
-            # Only process HTML/text
-            ct = resp.headers.get("content-type", "").lower()
-            if "text" not in ct and "html" not in ct and "json" not in ct:
-                return f"[محتوای غیر متنی: {ct}]"
-
-            html = resp.text
-            # Strip non-content blocks
-            html = _STRIP_TAGS_RE.sub(" ", html)
-            # Strip remaining tags
-            text = _TAG_RE.sub(" ", html)
-            # Normalize whitespace
-            from html import unescape
-            text = unescape(text)
-            text = re.sub(r"[ \t]+", " ", text)
-            text = re.sub(r"\n\s*\n+", "\n\n", text).strip()
-
-            elapsed = (monotonic() - t0) * 1000
-            logger.info("[NOYA-TIMING] 🌐 Fetched %s in %.1fms (chars=%d)", cleaned_url[:60], elapsed, len(text))
-
-            if len(text) > max_chars:
-                text = text[:max_chars] + "\n…[ادامه محتوا کوتاه شد]"
-
-            return text if text else "[صفحه خالی بود]"
-    except httpx.TimeoutException:
-        logger.warning("Fetch URL timeout: %s", cleaned_url[:60])
-        return "[خطا: زمان بارگذاری صفحه تمام شد]"
+        doc = await default_web_service.fetch_page(url)
+        elapsed = (monotonic() - t0) * 1000
+        text = doc.text
+        logger.info("[NOYA-TIMING] 🌐 Fetched %s in %.1fms (chars=%d)", url[:60], elapsed, len(text))
+        if len(text) > max_chars:
+            text = text[:max_chars] + "\n…[ادامه محتوا کوتاه شد]"
+        return text if text else "[صفحه خالی بود]"
     except Exception as exc:
-        logger.warning("Fetch URL failed: %s error=%s", cleaned_url[:60], exc)
+        logger.warning("Fetch URL failed: %s error=%s", url[:60], exc)
         return f"[خطا در باز کردن لینک: {exc}]"

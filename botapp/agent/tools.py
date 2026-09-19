@@ -38,15 +38,31 @@ def _strip_html(html: str) -> str:
 # ── Tool handlers ──
 
 async def _web_search(query: str = "") -> str:
-    from botapp.noya_search import maybe_web_search
-    result_block = await maybe_web_search(query)
-    return result_block if result_block else "نتیجه‌ای یافت نشد."
+    from botapp.web import default_web_service
+    clean_q = (query or "").strip()
+    if not clean_q:
+        return "لطفاً عبارت جستجو را مشخص کنید."
+    results = await default_web_service.search(clean_q, limit=5)
+    if not results:
+        return "نتیجه‌ای در اینترنت یافت نشد."
+    lines = []
+    for r in results:
+        lines.append(f"• {r.title} (منبع: {r.url})\n  خلاصه: {r.snippet}")
+    return "\n\n".join(lines)
 
 
 async def _fetch_url(url: str = "") -> str:
-    from botapp.services import fetch_url_content
-    content = await fetch_url_content(url, max_chars=8000)
-    return content if content else "محتوای صفحه قابل دریافت نبود."
+    from botapp.web import default_web_service
+    target = (url or "").strip()
+    if not target:
+        return "لطفاً آدرس لینک را وارد کنید."
+    try:
+        doc = await default_web_service.fetch_page(target)
+        header = f"عنوان صفحه: {doc.title}\nآدرس: {doc.final_url}\n"
+        body = doc.text[:8000]
+        return f"{header}\n{body}" if body else "صفحه خالی بود."
+    except Exception as exc:
+        return f"خطا در باز کردن لینک: {exc}"
 
 
 def _get_time(**_extra) -> str:
