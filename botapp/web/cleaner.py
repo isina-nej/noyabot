@@ -133,6 +133,9 @@ class ContentCleaner:
 
     @staticmethod
     def _clean_with_regex(html: str) -> str:
+        # Strip comments first
+        html = re.sub(r"<!--.*?-->", "", html, flags=re.DOTALL)
+
         # 1. Strip content noise tags (script, style, nav, footer, header, aside, etc.)
         pattern = r"<(?:%s)[^>]*>.*?</(?:%s)>" % ("|".join(STRIP_CONTENT_TAGS), "|".join(STRIP_CONTENT_TAGS))
         cleaned = re.sub(pattern, " ", html, flags=re.DOTALL | re.IGNORECASE)

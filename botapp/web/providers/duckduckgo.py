@@ -78,11 +78,7 @@ class DuckDuckGoProvider(SearchProvider):
             self._client = httpx.AsyncClient(
                 timeout=httpx.Timeout(self.timeout, connect=4.0),
                 follow_redirects=True,
-                headers={
-                    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/126.0.0.0 Safari/537.36",
-                    "Accept": "text/html,application/xhtml+xml,application/xml;q=0.9,*/*;q=0.8",
-                    "Accept-Language": "fa,en-US,en;q=0.9",
-                },
+                headers={"User-Agent": "Mozilla/5.0"},
             )
         return self._client
 
@@ -133,7 +129,6 @@ class DuckDuckGoProvider(SearchProvider):
         resp = await client.post(
             "https://lite.duckduckgo.com/lite/",
             data={"q": query},
-            headers={"Content-Type": "application/x-www-form-urlencoded"},
         )
         if resp.status_code != 200:
             return []
