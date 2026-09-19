@@ -393,6 +393,82 @@ async def generate_noya_image(prompt: str) -> bytes | None:
     return None
 
 
+async def edit_noya_image(instruction: str, image_data: bytes, image_mime: str = "image/jpeg") -> bytes | None:
+    """Edit an image via Gemini vision model: send image + edit instruction, get new image back."""
+    api_key = os.getenv("NOYA_API_KEY", "").strip()
+    base_url = os.getenv("NOYA_API_URL", "http://127.0.0.1:20128/v1/chat/completions").strip()
+    if not api_key:
+        logger.error("NOYA_API_KEY not configured for image edit")
+        return None
+
+    en_instruction = await _translate_prompt_for_image(instruction)
+
+    import base64 as b64mod
+    data_url = f"data:{image_mime};base64,{b64mod.b64encode(image_data).decode('ascii')}"
+
+    payload = {
+        "model": os.getenv("NOYA_IMAGE_EDIT_MODEL", "ag/gemini-3.1-flash-image"),
+        "messages": [
+            {
+                "role": "user",
+                "content": [
+                    {"type": "image_url", "image_url": {"url": data_url}},
+                    {"type": "text", "text": f"Edit this image: {en_instruction}. Return ONLY the edited image, no text."},
+                ],
+            }
+        ],
+        "max_tokens": 4096,
+    }
+    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    try:
+        t0 = monotonic()
+        async with httpx.AsyncClient(timeout=90.0) as client:
+            resp = await client.post(base_url, headers=headers, json=payload)
+            resp.raise_for_status()
+            logger.info("[NOYA-TIMING] ✏️ Image edit took %.1fms", (monotonic() - t0) * 1000)
+            data = resp.json()
+            # Gemini image models return inline_data in content parts
+            choices = data.get("choices") or []
+            if not choices:
+                logger.warning("Image edit returned no choices")
+                return None
+            msg = choices[0].get("message", {})
+            content = msg.get("content", "")
+            # Check if content is a list of parts (multimodal response)
+            if isinstance(content, list):
+                for part in content:
+                    if isinstance(part, dict):
+                        # OpenAI-style: {"type": "image_url", "image_url": {"url": "data:..."}}
+                        if part.get("type") == "image_url":
+                            url = part.get("image_url", {}).get("url", "")
+                            if url.startswith("data:"):
+                                b64_str = url.split(",", 1)[1] if "," in url else ""
+                                if b64_str:
+                                    return b64mod.b64decode(b64_str)
+                        # Gemini-style: {"type": "image", "source": {"data": "...", "media_type": "..."}}
+                        if part.get("type") == "image":
+                            src = part.get("source", {})
+                            b64_str = src.get("data", "")
+                            if b64_str:
+                                return b64mod.b64decode(b64_str)
+                        # inline_data style
+                        inline = part.get("inline_data", {})
+                        if inline.get("data"):
+                            return b64mod.b64decode(inline["data"])
+            # Fallback: maybe the model returned a text response with base64
+            if isinstance(content, str) and len(content) > 1000:
+                # Could be raw base64
+                try:
+                    return b64mod.b64decode(content)
+                except Exception:
+                    pass
+            logger.warning("Image edit: model returned text instead of image: %s", str(content)[:200])
+            return None
+    except Exception:
+        logger.exception("Noya image edit failed instruction=%s", en_instruction[:80])
+    return None
+
+
 async def call_ai_api(
     api_url: str,
     question: str,

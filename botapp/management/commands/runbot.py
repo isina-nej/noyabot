@@ -32,6 +32,7 @@ from botapp.services import (
     call_ai_api as request_ai_answer,
     call_noya_api,
     generate_noya_image,
+    edit_noya_image,
     clear_warnings,
     contains_blocked_word,
     consume_group_quota,
@@ -1241,6 +1242,26 @@ def extract_image_prompt(text: str) -> str | None:
     return None
 
 
+_IMAGE_EDIT_KEYWORDS = (
+    "رنگ", "تغییر", "عوض", "ویرایش", "ادیت", "حذف", "اضافه", "بزرگ", "کوچک",
+    "روشن", "تاریک", "بچرخون", "برعکس", "سیاه و سفید", "بلور", "محو", "شارپ",
+    "کراپ", "برش", "فیلتر", "پس‌زمینه", "بکگراند", "سفید", "سیاه", "قرمز",
+    "آبی", "سبز", "زرد", "صورتی", "بنفش", "نارنجی", "طلایی", "خاکستری",
+    "edit", "change", "remove", "add", "blur", "crop", "rotate", "flip",
+    "کن", "بکن", "بده", "بزن",
+)
+
+
+def _is_image_edit_request(text: str, has_reply_image: bool) -> bool:
+    """Detect if user is asking to edit/modify the replied image."""
+    if not has_reply_image:
+        return False
+    t = (text or "").strip().lower()
+    if not t:
+        return False
+    return any(kw in t for kw in _IMAGE_EDIT_KEYWORDS)
+
+
 async def _handle_noya_image_generation(message: Message, prompt_text: str):
     prompt_clean = (prompt_text or "").strip()
     if not prompt_clean:
@@ -1264,6 +1285,28 @@ async def _handle_noya_image_generation(message: Message, prompt_text: str):
     except Exception:
         logger.exception("Failed sending generated photo to chat=%s", message.chat.id)
         await progress.edit_text("عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
+
+
+async def _handle_noya_image_edit(message: Message, instruction: str, image_data: bytes, image_mime: str = "image/jpeg"):
+    """Handle image edit: user replies to an image with edit instructions."""
+    if message.bot:
+        await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
+    progress = await message.reply("در حال ویرایش عکس… ✏️")
+    edited_bytes = await edit_noya_image(instruction, image_data, image_mime)
+    if not edited_bytes:
+        await progress.edit_text("متأسفانه نتونستم عکس رو ویرایش کنم. لطفاً دوباره امتحان کن.")
+        return
+    try:
+        photo = BufferedInputFile(edited_bytes, filename="noya_edit.png")
+        caption = f"بفرما! ✏️\n<blockquote>{escape(instruction[:120])}</blockquote>"
+        await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
+        try:
+            await progress.delete()
+        except Exception:
+            pass
+    except Exception:
+        logger.exception("Failed sending edited photo to chat=%s", message.chat.id)
+        await progress.edit_text("عکس ویرایش شد ولی در ارسال خطا پیش اومد.")
 
 
 @router.message(Command("draw", "image", "pic", "عکس"))
@@ -1674,6 +1717,15 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     if img_prompt and not images:
         await _handle_noya_image_generation(message, img_prompt)
         return
+    # Image edit: user replies to an image with edit instructions
+    reply_has_image = bool(images and any(i.get("source") in ("reply", "reply_parent") for i in images))
+    if reply_has_image and _is_image_edit_request(ask, True):
+        # Get the first reply image for editing
+        reply_img = next((i for i in images if i.get("source") in ("reply", "reply_parent")), None)
+        if reply_img:
+            logger.info("[NOYA-TIMING] ✏️ Image edit detected: %r", ask[:60])
+            await _handle_noya_image_edit(message, ask, reply_img["data"], reply_img.get("mime", "image/jpeg"))
+            return
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     answer = await run_ai_with_memory(
         message,
