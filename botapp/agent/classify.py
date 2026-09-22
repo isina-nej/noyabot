@@ -19,6 +19,11 @@ logger = logging.getLogger("botapp.agent")
 
 _MIN_ROUTE_CONFIDENCE = 0.72
 
+# Jev fast-path thresholds: only a confident Jev verdict short-circuits the
+# LLM classifier. Anything ambiguous falls through to the existing path.
+_JEV_AGENT_CONFIDENCE = 0.80
+_JEV_CHAT_CONFIDENCE = 0.70
+
 
 def _normalize(text: str) -> str:
     return " ".join((text or "").casefold().split())
@@ -40,6 +45,33 @@ async def should_route_to_agent(text: str, *, chat_id: int, provider=None) -> bo
     cached = classify_cache.get(key)
     if cached is not None:
         return bool(cached)
+
+    # ── Jev fast path (SystemOne, fail-open) ──
+    # Returns None on any failure; confident verdicts short-circuit,
+    # everything else falls through to the LLM classifier below.
+    try:
+        from .jev_router import jev_classify_route
+
+        jev = await jev_classify_route(stripped, chat_id=chat_id)
+    except Exception:
+        logger.info("jev_classify_fail_open chat=%s", chat_id)
+        jev = None
+    if jev is not None:
+        route, conf = jev.get("route"), float(jev.get("confidence") or 0.0)
+        if route == "agent" and conf >= _JEV_AGENT_CONFIDENCE:
+            logger.info("jev_route_fast chat=%s agent conf=%.2f", chat_id, conf)
+            classify_cache.set(key, True)
+            return True
+        if route == "chat" and conf >= _JEV_CHAT_CONFIDENCE:
+            logger.info("jev_route_fast chat=%s chat conf=%.2f", chat_id, conf)
+            classify_cache.set(key, False)
+            return False
+        logger.info(
+            "jev_route_ambiguous chat=%s route=%s conf=%.2f llm_fallback",
+            chat_id,
+            route,
+            conf,
+        )
 
     timeout = float(os.getenv("AGENT_CLASSIFY_TIMEOUT", "2.5"))
     client = provider or NoyaAgentProvider(timeout=timeout)
