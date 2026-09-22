@@ -89,7 +89,9 @@ async def run_agent_loop(
     model = os.getenv("NOYA_MODEL", "FastText").strip()
     tool_model = os.getenv("NOYA_TOOL_MODEL", model).strip()
 
-    headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
+    headers: dict[str, str] = {"Content-Type": "application/json"}
+    if api_key:
+        headers["Authorization"] = f"Bearer {api_key}"
     tools = registry.definitions()
 
     messages: list[dict[str, Any]] = []
