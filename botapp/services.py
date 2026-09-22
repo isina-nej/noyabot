@@ -329,7 +329,7 @@ async def _translate_prompt_for_image(prompt: str) -> str:
     # ponytail: direct LLM call; extract to shared helper when 2nd caller appears
     try:
         t0 = monotonic()
-        async with httpx.AsyncClient(timeout=15.0) as client:
+        async with httpx.AsyncClient(timeout=25.0) as client:
             resp = await client.post(
                 base_url,
                 headers={"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"},
