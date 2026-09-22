@@ -1842,6 +1842,36 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             logger.info("[NOYA-TIMING] ✏️ Image edit detected: %r", ask[:60])
             await _handle_noya_image_edit(message, ask, reply_img["data"], reply_img.get("mime", "image/jpeg"))
             return
+    # ── Jev media fast path (voice/image/none, fail-open) ──
+    # Strict regexes above already handled exact phrasings; Jev covers the
+    # rest. The whole block is guarded: any failure falls through to the
+    # LLM path unchanged.
+    try:
+        from botapp.agent import jev_media as _jev_media_mod
+
+        _jev_verdict = await _jev_media_mod.jev_classify_media(ask, chat_id=int(message.chat.id))
+        _jev_action = _jev_media_mod.media_action(
+            (_jev_verdict or {}).get("media"), (_jev_verdict or {}).get("confidence")
+        )
+        if _jev_verdict is not None and _jev_action == "voice":
+            _voice_text = extract_voice_text(ask) or _jev_media_mod.strip_media_trigger(ask, "voice")
+            if _voice_text:
+                logger.info("jev_media_fast chat=%s voice conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
+                await _handle_noya_tts(message, _voice_text)
+                return
+        elif _jev_verdict is not None and _jev_action == "image" and not images:
+            _img_prompt = extract_image_prompt(ask) or _jev_media_mod.strip_media_trigger(ask, "image")
+            if _img_prompt:
+                logger.info("jev_media_fast chat=%s image conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
+                await _handle_noya_image_generation(message, _img_prompt)
+                return
+        elif _jev_verdict is not None and _jev_action == "image" and images:
+            _edit_img = next((i for i in images if i.get("source") in ("reply", "reply_parent")), None) or images[0]
+            logger.info("jev_media_fast chat=%s image_edit conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
+            await _handle_noya_image_edit(message, ask, _edit_img["data"], _edit_img.get("mime", "image/jpeg"))
+            return
+    except Exception:
+        logger.info("jev_media_fail_open chat=%s", message.chat.id)
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     answer, agent_metadata = await run_ai_with_memory(
         message,

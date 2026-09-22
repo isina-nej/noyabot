@@ -126,6 +126,34 @@ RESPONSES = [
 ]
 
 
+def _is_real_ai_invocation(message: types.Message, bot_user, text: str) -> bool:
+    """True when this message belongs to the main AI path.
+
+    Ported from the stashed easter-egg guard and adapted to the current
+    structure: prefix triggers with a real question, @mention triggers, and
+    replies to the bot must never be swallowed by the canned reply below.
+    Bare «نویا» (no question) is NOT a real invocation — it keeps the
+    canned easter-egg reply.
+    """
+    t = (text or "").strip()
+    if not t or t.startswith("/"):
+        return False
+    lowered = t.lower()
+    for prefix in ("نویا", "noya", "nuya", "noia", "nuia"):
+        if lowered.startswith(prefix):
+            rest = t[len(prefix):].strip(" \t,،:.-\u200c")
+            if rest:
+                return True
+    username = (getattr(bot_user, "username", None) or "").lower()
+    if username and f"@{username}" in lowered:
+        return True
+    replied = getattr(message, "reply_to_message", None)
+    replied_from = getattr(replied, "from_user", None)
+    if replied_from is not None and getattr(replied_from, "id", None) == getattr(bot_user, "id", None):
+        return True
+    return False
+
+
 @router.message(F.text.regexp(_NOYA_NAME_RE))
 async def nouya_mention_handler(message: types.Message):
     """Handle bare/mid-sentence «نویا» mentions that the main prefix path missed."""
@@ -136,16 +164,12 @@ async def nouya_mention_handler(message: types.Message):
     bot_user = await message.bot.get_me()
     if is_self_bot_message(message, self_bot_id=int(bot_user.id)):
         return
-    username = (bot_user.username or "").lower()
-    if username and f"@{username}" in text.lower():
-        raise SkipHandler()
 
-    # Prefix path belongs to handle_text_message.
-    if _AI_PREFIX_RE.match(text):
+    # Real AI invocations belong to handle_text_message (main router runs
+    # first); never steal them with the canned reply.
+    if _is_real_ai_invocation(message, bot_user, text):
         raise SkipHandler()
     replied = getattr(message, "reply_to_message", None)
-    if replied and getattr(replied, "from_user", None) and replied.from_user.id == bot_user.id:
-        raise SkipHandler()
 
     # If there is a real question around the name — or a reply/tag target —
     # answer with Noya AI so she can read that message (+ parent reply).
