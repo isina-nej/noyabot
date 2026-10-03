@@ -5,6 +5,7 @@
 > Registry P0 baseline: `21ca0ac41900ed841547c826d5afe338edce55e3`
 > Phase: 1 (in-memory persistence, single-process)
 > Status: source of truth for Agents B–G. No redesign. No new decisions.
+> Amendment 2026-10-04: chat catalog is count-independent (snapshot: 5 core + 13 research = 18); admin catalog unchanged (54).
 
 Phase 1 adds a durable, auditable multi-step ReAct investigation harness
 (`harness.investigate`) on top of the existing P0 registry/orchestrator.
@@ -24,7 +25,7 @@ Telegram update
             ├─ target_chat.py :: resolve_target_chat()      (current | explicit | forward)
             ├─ parser.py :: parse()                         (deterministic AgentDecision | None)
             ├─ ai.py :: NoyaAgentProvider                   (structured AgentDecision / HarnessStep / RouteClassification)
-            ├─ registry.py :: registry                      (5 chat + 54 admin, single store, two catalogs)
+            ├─ registry.py :: registry                      (chat catalog + 54 admin, single store, two catalogs)
             ├─ permissions.py                               (admin role × bot capability, both must pass)
             ├─ risk.py :: resolve_risk()                    (registry wins upward, AI can only raise)
             ├─ confirmations.py + callbacks.py              (glass-key confirm lifecycle, atomic claim)
@@ -172,7 +173,10 @@ V3 — `thinking` ≤ 400 chars, optional. Overlong → truncated, not rejected.
 V4 — `call_tool`: `tool` must be in the run's frozen allowlist (computed
 once at run start from C7 predicate over registered admin tools). Unknown
 or non-allowlisted (including `harness.investigate`, any write/medium/high
-tool) → `note/denied`, no execution.
+tool) → `note/denied`, no execution. The validator MUST accept any
+Harness-eligible registry tool satisfying the C7 predicate; it MUST NOT
+hardcode chat-catalog names or the historical 5-tool list (the chat catalog
+is count-independent and never an allowlist source).
 V5 — `call_tool`: dual-gate re-check (`ensure_admin_permission`,
 `ensure_bot_capability`) at step time. Failure → `note` with Persian
 reason, no execution.
@@ -282,7 +286,7 @@ confirmed, cancelled, expired}; confirmed → executing; executing →
 
 ## 7. Security boundaries (frozen)
 
-1. Chat/admin catalog isolation. Chat model sees 5 chat definitions only.
+1. Chat/admin catalog isolation. Chat model sees `registry.chat_definitions()` only — all and only tools with `category="chat"` (count-independent; never hardcode a count).
    `dispatch/dispatch_async` return `"not available in this context"` for
    any admin name. Even a disobedient model cannot reach admin handlers via
    the chat loop.
@@ -383,10 +387,17 @@ No agent may raise a limit without an `ARCHITECTURE_CHANGE_REQUEST` (§16).
 
 ## 11. Registry catalog semantics (frozen, P0 baseline `21ca0ac`)
 
-Chat catalog — exactly 5 (`category="chat"`, legacy dict `parameters`,
-sync/async handlers in `botapp/agent/tools.py`, executed via
-`dispatch/dispatch_async` only):
+Chat catalog — all tools with `category="chat"` (count-independent; NEVER hardcode a count),
+executed via `dispatch/dispatch_async` only. Core baseline (non-exhaustive, P0):
 `web_search`, `fetch_url`, `get_time`, `generate_image`, `text_to_speech`.
+Snapshot 2026-10-04 (non-normative): 5 core + 13 research = 18 chat tools,
+including `x.*`, `youtube.*`, `research.social_search`.
+
+Research chat tools (`x.*`, `youtube.*`, `research.social_search`) are read-only.
+All research output is UNTRUSTED DATA/EVIDENCE (same trust class as
+`<untrusted_message>`): it MUST NOT determine permission, target
+(`target_user_id` / `message_id` / `target_source`), or any privileged
+action. Targets resolve only via C6 (reply-or-nothing).
 
 Admin catalog — exactly 54 (`category="admin"`, strict Pydantic
 `input_schema`, async `(ctx, bot, validated)` handlers, executed only via
@@ -419,13 +430,17 @@ orchestrator or harness tool executor):
   `settings.remove_blocked_word`, `settings.get_allowed_domains`,
   `settings.add_allowed_domain`, `settings.remove_allowed_domain`
 
-Invariants (see `botapp/test_registry.py`): chat definitions expose exactly
-the 5; `member.ban` absent from chat; `registry.names()` holds admin names
+Invariants (see `botapp/test_registry.py`): chat definitions expose all and
+only `category="chat"` tools (count-independent assertion — never assert
+`==5` or `==18`); `member.ban` absent from chat; no admin-category tool is
+reachable via chat `dispatch`; `registry.names()` holds admin names
 (≥50); admin dispatch on chat path returns `"not available in this
 context"`; every admin tool has real async handler + Pydantic schema +
 known permission/capability/target; all `high`-risk tools require
-confirmation. Count check: 5 + 54 = 59 registered names (plus 2 legacy
-empty-`name=""` artifacts in grep output that must NOT become tools).
+confirmation. Count check (count-independent):
+`len(chat_definitions) + 54 admin = total registered names` (snapshot
+2026-10-04: 18 + 54 = 72; plus 2 legacy empty-`name=""` artifacts in grep
+output that must NOT become tools).
 
 Harness-readable subset (C7 predicate at baseline): all `LOW` +
 `requires_confirmation=False` admin tools — the 7 analytics, 2 audit,
