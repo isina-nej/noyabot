@@ -92,7 +92,9 @@ async def run_agent_loop(
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    tools = registry.definitions()
+    # Chat loop may only ever see the five conversational tools. The admin
+    # catalog shares this registry but is never offered to the chat model.
+    tools = registry.chat_definitions()
 
     messages: list[dict[str, Any]] = []
     if system_prompt:

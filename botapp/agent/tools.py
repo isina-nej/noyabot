@@ -107,6 +107,7 @@ registry.register(Tool(
     description="جستجوی اطلاعات در اینترنت. از DuckDuckGo استفاده می‌کند.",
     parameters={"type": "object", "properties": {"query": {"type": "string", "description": "متن جستجو"}}, "required": ["query"]},
     handler=_web_search, emoji="🔍",
+    category="chat",
 ))
 
 registry.register(Tool(
@@ -114,6 +115,7 @@ registry.register(Tool(
     description="خواندن و تحلیل محتوای یک صفحه وب. لینک را بده تا محتوا را بخوانم.",
     parameters={"type": "object", "properties": {"url": {"type": "string", "description": "آدرس URL"}}, "required": ["url"]},
     handler=_fetch_url, emoji="🌐",
+    category="chat",
 ))
 
 registry.register(Tool(
@@ -121,6 +123,7 @@ registry.register(Tool(
     description="اعلام ساعت و تاریخ فعلی به وقت تهران.",
     parameters={"type": "object", "properties": {}},
     handler=_get_time, emoji="⏰",
+    category="chat",
 ))
 
 registry.register(Tool(
@@ -128,6 +131,7 @@ registry.register(Tool(
     description="تولید تصویر با هوش مصنوعی. توصیف را به انگلیسی بنویس.",
     parameters={"type": "object", "properties": {"prompt": {"type": "string", "description": "توصیف تصویر به انگلیسی"}}, "required": ["prompt"]},
     handler=_generate_image, emoji="🎨",
+    category="chat",
 ))
 
 registry.register(Tool(
@@ -135,4 +139,5 @@ registry.register(Tool(
     description="تبدیل متن به صدا. متن فارسی یا انگلیسی بده.",
     parameters={"type": "object", "properties": {"text": {"type": "string", "description": "متن برای تبدیل به صدا"}}, "required": ["text"]},
     handler=_text_to_speech, emoji="🔊",
+    category="chat",
 ))
