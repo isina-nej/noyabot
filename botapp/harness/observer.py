@@ -13,7 +13,7 @@ from dataclasses import dataclass
 from typing import Any
 
 from .limits import MAX_REPLANS, MAX_STEPS, MAX_TOOL_CALLS, MAX_TOTAL_RUNTIME_S
-from .state import CANCELLED, FAILED, SUCCEEDED, WAITING_CONFIRMATION, HarnessRunState
+from .state import CANCELLED, FAILED, FINISHED, WAITING_CONFIRMATION, HarnessRunState
 
 CONTINUE = "CONTINUE"
 WAIT = "WAIT"
@@ -55,8 +55,8 @@ class Observer:
 
         if snap.status == CANCELLED or snap.cancel_requested:
             return self._rec(FAIL, "cancelled", snap)
-        if snap.status == SUCCEEDED:
-            return self._rec(FINISH, "run succeeded", snap)
+        if snap.status == FINISHED:
+            return self._rec(FINISH, "run finished", snap)
         if snap.status == FAILED:
             return self._rec(FAIL, snap.error or "run failed", snap)
         if snap.status == WAITING_CONFIRMATION:
@@ -69,7 +69,7 @@ class Observer:
         if prev is not None and prev.status == "failed" and remaining > 0:
             return self._rec(REPLAN, f"step {prev.step_id} failed; replan bounded ({remaining} left)", snap)
         if snap.current_index >= cfg.max_steps or snap.current_index >= len(snap.steps):
-            ok = any(s.status == "succeeded" for s in snap.steps)
+            ok = any(s.status == "finished" for s in snap.steps)
             if ok:
                 return self._rec(FINISH, "plan exhausted with observations", snap)
             if not snap.steps:

@@ -29,7 +29,7 @@ from .state import (
     FAILED,
     PENDING,
     RUNNING,
-    SUCCEEDED,
+    FINISHED,
     WAITING_CONFIRMATION,
     HarnessRunState,
     HarnessStepState,
@@ -193,12 +193,12 @@ class HarnessExecutor:
             if run.cancel_requested:
                 return self.cancel(run_id)
             if run.current_index >= len(run.steps):
-                return self._finish(run, SUCCEEDED, "")
+                return self._finish(run, FINISHED, "")
             nxt = self._check_budgets(run)
             if nxt is not None:
                 return nxt
             step = run.steps[run.current_index]
-            if step.status in ("succeeded", "failed", "skipped", "cancelled"):
+            if step.status in ("finished", "failed", "skipped", "cancelled"):
                 run.current_index += 1
                 self.store.save(run)
                 continue
@@ -222,12 +222,12 @@ class HarnessExecutor:
             if run.cancel_requested:
                 return self.cancel(run_id)
             if run.current_index >= len(run.steps):
-                return self._finish(run, SUCCEEDED, "")
+                return self._finish(run, FINISHED, "")
             nxt = self._check_budgets(run)
             if nxt is not None:
                 return nxt
             step = run.steps[run.current_index]
-            if step.status in ("succeeded", "failed", "skipped", "cancelled"):
+            if step.status in ("finished", "failed", "skipped", "cancelled"):
                 run.current_index += 1
                 self.store.save(run)
                 continue
@@ -319,7 +319,7 @@ class HarnessExecutor:
 
     def _record_success(self, run: HarnessRunState, step: HarnessStepState, result: Any, elapsed: float) -> None:
         step.result = truncate_result(result, MAX_RESULT_SIZE)
-        step.status = "succeeded"
+        step.status = "finished"
         step.error = ""
         step.ended_at = self.clock()
         if step.tool:
@@ -406,15 +406,15 @@ class HarnessExecutor:
 
     def _finish(self, run: HarnessRunState, status: str, error: str) -> HarnessRunState:
         run = self._load(run.run_id)
-        if status == SUCCEEDED:
-            ok_steps = [s for s in run.steps if s.status == "succeeded"]
+        if status == FINISHED:
+            ok_steps = [s for s in run.steps if s.status == "finished"]
             if not run.steps:
-                run.status = SUCCEEDED
+                run.status = FINISHED
             elif not ok_steps:
                 run.status = FAILED  # all failed != success
                 run.error = error or "all_steps_failed"
             else:
-                run.status = SUCCEEDED
+                run.status = FINISHED
                 if any(s.status == "failed" for s in run.steps):
                     run.error = error or "partial_failure"
                 last = ok_steps[-1].result

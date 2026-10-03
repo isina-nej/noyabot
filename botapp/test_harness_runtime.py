@@ -99,7 +99,7 @@ class ExecutorTests(SimpleTestCase):
         ex.tool_executor = lambda tool, params: (seen.append((tool, dict(params))) or ("AAA" if tool == "s1" else params.get("prev")))
         run = ex.create_run([{"tool": "s1"}, {"tool": "s2", "params": {"prev": {"$ref": "step:001"}}}])
         out = ex.run(run.run_id)
-        self.assertEqual(out.status, "succeeded")
+        self.assertEqual(out.status, "finished")
         self.assertEqual(seen[1][1], {"prev": "AAA"})
         self.assertEqual(out.tool_calls_used, 2)
 
@@ -128,7 +128,7 @@ class ExecutorTests(SimpleTestCase):
         run = ex.create_run([{"tool": "a"}, {"tool": "b"}])
         out = ex.run(run.run_id)
         self.assertTrue(any(s.status == "failed" and "timeout" in s.error for s in out.steps))
-        self.assertEqual(out.status, "succeeded")  # partial failure continues
+        self.assertEqual(out.status, "finished")  # partial failure continues
 
     def test_partial_failure_records_and_continues(self):
         ex = HarnessExecutor(
@@ -137,10 +137,10 @@ class ExecutorTests(SimpleTestCase):
         )
         run = ex.create_run([{"tool": "boom"}, {"tool": "fine"}])
         out = ex.run(run.run_id)
-        self.assertEqual(out.status, "succeeded")
+        self.assertEqual(out.status, "finished")
         self.assertEqual(out.error, "partial_failure")
         self.assertEqual(out.steps[0].status, "failed")
-        self.assertEqual(out.steps[1].status, "succeeded")
+        self.assertEqual(out.steps[1].status, "finished")
 
     def test_all_steps_fail_is_failed(self):
         ex = HarnessExecutor(store=InMemoryRunStore(), tool_executor=_exec({"a": RuntimeError("x")}))
@@ -200,7 +200,7 @@ class ExecutorTests(SimpleTestCase):
             ex = HarnessExecutor(store=InMemoryRunStore(), tool_executor=aexec)
             return await ex.arun(ex.create_run([{"tool": "a"}, {"tool": "b"}]).run_id)
         out = asyncio.run(go())
-        self.assertEqual(out.status, "succeeded")
+        self.assertEqual(out.status, "finished")
 
 
 class ConfirmationTests(SimpleTestCase):
@@ -212,7 +212,7 @@ class ConfirmationTests(SimpleTestCase):
         self.assertEqual(paused.steps[0].status, WAITING_CONFIRMATION)
         resumed = ex.resume(run.run_id, approvals={paused.steps[0].step_id: True})
         live = ex.store.get(run.run_id)
-        self.assertIn(live.status, ("succeeded", "failed", WAITING_CONFIRMATION))
+        self.assertIn(live.status, ("finished", "failed", WAITING_CONFIRMATION))
         # approved gate must have cleared
         self.assertNotEqual(live.steps[0].status, WAITING_CONFIRMATION)
 
@@ -229,7 +229,7 @@ class ConfirmationTests(SimpleTestCase):
         paused = ex.run(run.run_id)
         out = ex.resume(run.run_id, approvals={paused.steps[0].step_id: False})
         self.assertEqual(out.steps[0].status, "skipped")
-        self.assertEqual(out.status, "succeeded")
+        self.assertEqual(out.status, "finished")
 
     def test_resume_without_approval_stays_paused(self):
         ex = HarnessExecutor(store=InMemoryRunStore(), tool_executor=_exec())
@@ -251,7 +251,7 @@ class ObserverTests(SimpleTestCase):
         r = self._run(status="running", steps=[])
         r.steps = []
         self.assertEqual(Observer().observe(self._run(status="cancelled")).verdict, FAIL)
-        self.assertEqual(Observer().observe(self._run(status="succeeded")).verdict, FINISH)
+        self.assertEqual(Observer().observe(self._run(status="finished")).verdict, FINISH)
         self.assertEqual(Observer().observe(self._run(status="failed", error="x")).verdict, FAIL)
         self.assertEqual(Observer().observe(self._run(status=WAITING_CONFIRMATION)).verdict, WAIT)
 

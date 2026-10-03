@@ -23,21 +23,27 @@ from .limits import MAX_RESULT_SIZE
 
 
 # --- Statuses ---------------------------------------------------------------
+# Canonical run/step success is FINISHED="finished" per HARNESS_ARCHITECTURE
+# section 5 (status: running | finished | fallback | max_steps | disabled)
+# and section 6 ([finished]/[fallback]/[max_steps]/[disabled]).
+# Extra runtime states (pending, waiting_confirmation, failed, cancelled,
+# skipped) are Agent E extensions for budget/confirmation/cancellation
+# handling; success itself is always the frozen "finished" value.
 
 class RunStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
-    WAITING_CONFIRMATION = "waiting_confirmation"
-    SUCCEEDED = "succeeded"
-    FAILED = "failed"
-    CANCELLED = "cancelled"
+    WAITING_CONFIRMATION = "waiting_confirmation"  # runtime ext: pause, wait outside budget
+    FINISHED = "finished"  # frozen success
+    FAILED = "failed"  # runtime ext: budgets/all-fail (contract encodes via error+finished/fallback)
+    CANCELLED = "cancelled"  # runtime ext: cancellation
 
 
 class StepStatus(str, Enum):
     PENDING = "pending"
     RUNNING = "running"
     WAITING_CONFIRMATION = "waiting_confirmation"
-    SUCCEEDED = "succeeded"
+    FINISHED = "finished"  # canonical step success
     FAILED = "failed"
     SKIPPED = "skipped"
     CANCELLED = "cancelled"
@@ -47,11 +53,11 @@ class StepStatus(str, Enum):
 PENDING = RunStatus.PENDING.value
 RUNNING = RunStatus.RUNNING.value
 WAITING_CONFIRMATION = RunStatus.WAITING_CONFIRMATION.value
-SUCCEEDED = RunStatus.SUCCEEDED.value
+FINISHED = RunStatus.FINISHED.value
 FAILED = RunStatus.FAILED.value
 CANCELLED = RunStatus.CANCELLED.value
 
-TERMINAL_STATUSES = frozenset({RunStatus.SUCCEEDED.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value})
+TERMINAL_STATUSES = frozenset({RunStatus.FINISHED.value, RunStatus.FAILED.value, RunStatus.CANCELLED.value})
 
 
 class RunNotFoundError(KeyError):
@@ -144,7 +150,7 @@ class HarnessStepState:
     @property
     def is_terminal(self) -> bool:
         return self.status in (
-            StepStatus.SUCCEEDED.value, StepStatus.FAILED.value,
+            StepStatus.FINISHED.value, StepStatus.FAILED.value,
             StepStatus.SKIPPED.value, StepStatus.CANCELLED.value,
         )
 
@@ -171,7 +177,7 @@ class HarnessRunState:
         return self.status in TERMINAL_STATUSES
 
     def results_by_step(self) -> dict[str, Any]:
-        return {s.step_id: s.result for s in self.steps if s.status == StepStatus.SUCCEEDED.value}
+        return {s.step_id: s.result for s in self.steps if s.status == StepStatus.FINISHED.value}
 
     def new_step_id(self) -> str:
         return f"{len(self.steps) + 1:03d}"
@@ -260,7 +266,7 @@ class InMemoryRunStore:
                 step_id=f"{len(run.steps) + 1:03d}",
                 tool=str(getattr(obs, "name", "observation")),
                 params={},
-                status=StepStatus.SUCCEEDED.value,
+                status=StepStatus.FINISHED.value,
                 result=truncate_result(summary),
             ))
 

@@ -13,6 +13,6 @@ MAX_RESULT_SIZE = 4000
 
 # Per-step wall-clock default (not frozen; per-run override allowed).
 # Must stay well under MAX_TOTAL_RUNTIME_S so several steps fit in budget.
-PER_STEP_TIMEOUT_S = 20.0
+PER_STEP_TIMEOUT_S = 15.0
 MAX_STEP_RUNTIME_S = PER_STEP_TIMEOUT_S  # alias
 DEFAULT_STEP_TIMEOUT_S = PER_STEP_TIMEOUT_S  # alias
