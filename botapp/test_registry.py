@@ -1,18 +1,30 @@
-"""Registry contract + chat/admin visibility tests (P0 scope only).
+"""Registry contract + chat/admin visibility tests.
 
-Covers the two repaired P0s without touching product behaviour:
-admin metadata is preserved and validated, and the normal Noya chat loop
-sees exactly the five conversational tools.
+Covers the registry P0s without touching product behaviour: admin
+metadata is preserved and validated, the normal Noya chat loop sees
+the conversational tools plus the read-only research catalog
+(``botapp.research``), and the admin catalog stays invisible to the
+chat path.
 """
 from django.test import SimpleTestCase
 
-import botapp.agent  # noqa: F401  (registers the 5 chat tools on import)
+import botapp.agent  # noqa: F401  (registers chat + research tools on import)
 import botapp.agent_tools  # noqa: F401  (registers the admin tools)
 from botapp.agent.errors import InvalidToolInput, UnknownTool
 from botapp.agent.registry import registry
 
 
-CHAT_TOOLS = {"web_search", "fetch_url", "get_time", "generate_image", "text_to_speech"}
+BASE_CHAT_TOOLS = {"web_search", "fetch_url", "get_time", "generate_image", "text_to_speech"}
+
+RESEARCH_CHAT_TOOLS = {
+    "x.search_posts", "x.get_post", "x.get_thread", "x.get_user",
+    "x.get_user_posts", "x.get_replies",
+    "youtube.search", "youtube.get_video", "youtube.get_channel",
+    "youtube.get_comments", "youtube.get_playlist", "youtube.get_transcript",
+    "research.social_search",
+}
+
+CHAT_TOOLS = BASE_CHAT_TOOLS | RESEARCH_CHAT_TOOLS
 
 
 class RegistryContractTests(SimpleTestCase):
@@ -58,13 +70,54 @@ class RegistryContractTests(SimpleTestCase):
 
 
 class ChatAdminSeparationTests(SimpleTestCase):
-    def test_chat_loop_sees_exactly_five_tools(self):
+    def test_chat_loop_sees_chat_plus_research_tools(self):
         names = {entry["function"]["name"] for entry in registry.chat_definitions()}
         self.assertEqual(names, CHAT_TOOLS)
+
+    def test_research_tools_visible_to_chat_loop(self):
+        names = {entry["function"]["name"] for entry in registry.chat_definitions()}
+        for tool_name in RESEARCH_CHAT_TOOLS:
+            self.assertIn(tool_name, names)
 
     def test_admin_tool_absent_from_chat_definitions(self):
         names = {entry["function"]["name"] for entry in registry.chat_definitions()}
         self.assertNotIn("member.ban", names)
+
+    def test_research_tools_absent_from_admin_catalog(self):
+        self.assertFalse(registry.has("x.search_posts"))
+        self.assertFalse(registry.has("youtube.search"))
+        self.assertFalse(registry.has("research.social_search"))
+        self.assertNotIn("research.social_search", registry.names())
+
+    def test_research_tool_dispatched_on_chat_path(self):
+        import asyncio
+
+        from botapp.research import credentials as creds
+
+        orig = (creds.CredentialStore.x_enabled, creds.CredentialStore.x_bearer)
+        creds.CredentialStore.x_enabled = staticmethod(lambda: True)
+        creds.CredentialStore.x_bearer = staticmethod(lambda: "test-bearer-token")
+        try:
+            from unittest.mock import AsyncMock, patch
+
+            from botapp.research.models import ResearchItem
+
+            fake = [ResearchItem(
+                platform="x", source_type="post", source_id="1",
+                author="A", title="@a", text="hello",
+                published_at=None, url="https://x.com/a/status/1",
+            )]
+            with patch(
+                "botapp.research.providers.x.XResearchProvider.search",
+                AsyncMock(return_value=fake),
+            ):
+                out = asyncio.run(registry.dispatch_async(
+                    "x.search_posts", {"query": "test"},
+                ))
+            self.assertIn("x.com", out)
+            self.assertNotIn("test-bearer-token", out)
+        finally:
+            creds.CredentialStore.x_enabled, creds.CredentialStore.x_bearer = orig
 
     def test_admin_catalog_still_lists_admin_tools(self):
         self.assertIn("member.ban", registry.names())
