@@ -11,3 +11,6 @@ staticfiles/
 .coverage
 .pytest_cache/
 .mypy_cache/
+x-bridge/cookies.json
+noyabot.session
+*.session

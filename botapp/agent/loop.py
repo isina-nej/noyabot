@@ -92,8 +92,9 @@ async def run_agent_loop(
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if api_key:
         headers["Authorization"] = f"Bearer {api_key}"
-    # Chat loop may only ever see the five conversational tools. The admin
-    # catalog shares this registry but is never offered to the chat model.
+    # Chat loop sees only the chat catalog (conversational + read-only
+    # research tools). The admin catalog shares this registry but is
+    # never offered to the chat model.
     tools = registry.chat_definitions()
 
     messages: list[dict[str, Any]] = []
@@ -107,10 +108,13 @@ async def run_agent_loop(
     used_tools: list[str] = []
     seen_search_queries: set[str] = set()
     seen_fetch_urls: set[str] = set()
+    seen_research_queries: set[str] = set()
     search_count = 0
     fetch_count = 0
+    research_count = 0
     MAX_SEARCHES = 3
     MAX_FETCHES = 6
+    MAX_RESEARCH_CALLS = 4
 
     for iteration in range(MAX_ITERATIONS):
         payload: dict[str, Any] = {
@@ -196,6 +200,26 @@ async def run_agent_loop(
                 else:
                     seen_fetch_urls.add(u)
                     fetch_count += 1
+                    result = await registry.dispatch_async(tool_name, args)
+            elif tool_name in (
+                "research.social_search", "x.search_posts", "x.get_post",
+                "x.get_thread", "x.get_user", "x.get_user_posts",
+                "x.get_replies", "youtube.search", "youtube.get_video",
+                "youtube.get_channel", "youtube.get_comments",
+                "youtube.get_playlist", "youtube.get_transcript",
+            ):
+                raw_q = (args.get("query") or args.get("post_id")
+                         or args.get("video_id") or args.get("handle")
+                         or args.get("channel_id") or args.get("playlist_id") or "").strip()
+                norm_q = re.sub(r"\s+", " ", raw_q).casefold()
+                q = tool_name + ":" + norm_q
+                if q in seen_research_queries:
+                    result = "این تحقیق قبلاً با همین ورودی انجام شده است؛ لطفاً بر اساس اطلاعات بالا پاسخ را ادامه دهید."
+                elif research_count >= MAX_RESEARCH_CALLS:
+                    result = "سقف تعداد تحقیق (X/YouTube/اجتماعی) در این مکالمه تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
+                else:
+                    seen_research_queries.add(q)
+                    research_count += 1
                     result = await registry.dispatch_async(tool_name, args)
             else:
                 result = await registry.dispatch_async(tool_name, args)

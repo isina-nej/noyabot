@@ -2,10 +2,12 @@
 
 Single registry, two strictly separated catalogs:
 
-- chat catalog (``category="chat"``): exactly the five conversational
-  tools (web_search, fetch_url, get_time, generate_image,
-  text_to_speech). The normal Noya loop in ``botapp/agent/loop.py`` only
-  ever offers ``chat_definitions()`` to the model.
+- chat catalog (``category="chat"``): conversational tools
+  (web_search, fetch_url, get_time, generate_image, text_to_speech)
+  plus the read-only research tools (x.*, youtube.*,
+  research.social_search) from ``botapp.research``. The normal Noya
+  loop in ``botapp/agent/loop.py`` only ever offers
+  ``chat_definitions()`` to the model.
 - admin catalog (``category="admin"``): group/channel/member/message/
   settings/analytics/audit/harness tools. They are resolved only through
   ``botapp/agent/orchestrator.py``, which enforces admin permission, bot

@@ -184,7 +184,7 @@ cp .env.example .env
 پرامپت سیستمی اصلی شخصیت «نویا» در مسیر زیر قرار دارد:
 `botapp/ai/prompts.py`
 
-- **نسخه پرامپت**: `NOYA_SYSTEM_PROMPT_VERSION = "v4"` (شخصیت لوس / بانمک / نازی / کمی پررو و لجباز)
+- **نسخه پرامپت**: `NOYA_SYSTEM_PROMPT_VERSION = "v7"` — برای صورت‌حساب ابزارهای تحقیق جدید، متن پرامپت را در همان فایل ببینید.
 - **نحوه اتصال:** در فایل `botapp/services.py` از تابع `build_ai_messages` استفاده شده تا پرامپت دقیقاً در نقش `system` و قبل از متون کاربر و Context حافظه به `Payload` اضافه‌شود.
 - **هویت سازنده:** `NOYA_CREATOR_IDS` (مثلاً `1399836576`) + `NOYA_CREATOR_NAME` / `NOYA_CREATOR_USERNAME`. وقتی کسی می‌پرسد سازنده‌اش کیست، باید با منشن HTML (`tg://user?id=…`) به همان نفر اشاره کند. بلوک `[SPEAKER]` نقش `creator|user` را مشخص می‌کند.
 - **چت پیوی:** هر متن غیر‌دستوری در گفت‌وگوی خصوصی با نویا جواب داده می‌شود (نیازی به `/prompt` نیست).
@@ -301,6 +301,23 @@ AGENT_HARNESS_MAX_STEPS=5
 MESSAGE_ARCHIVE_ENABLED=false
 MESSAGE_ARCHIVE_RETENTION_DAYS=30
 ```
+
+### تحقیق چندمنبعی وب + X + یوتیوب (فقط خواندنی)
+
+لایه تحقیق در `botapp/research/` قرار دارد (providerهای `web` / `x` / `youtube` →‏ normalize → dedupe → rank → evidence با مرز `<external_source platform="...">`). همه خروجی‌ها داده غیرمعتمد‌اند و هرگز دستور سیستمی نیستند؛ credentialها (توکن X، کلید YouTube، کوکی bridge) هرگز وارد prompt، tool result، log یا audit نمی‌شوند.
+
+ابزارهای چت (read-only — هیچ write/post/like/follow/comment فعال نیست):
+
+```text
+x.search_posts / x.get_post / x.get_thread / x.get_user / x.get_user_posts / x.get_replies
+youtube.search / youtube.get_video / youtube.get_channel / youtube.get_comments / youtube.get_playlist / youtube.get_transcript
+research.social_search   (تجمیع وب+X+یوتیوب؛ partial-failure کل تحقیق را fail نمی‌کند)
+```
+
+- **ترتیب X:** ابتدا Official X API v2 (با `X_BEARER_TOKEN`)؛ bridge محلی `x-bridge` (روی `127.0.0.1` + توکن داخلی `X_BRIDGE_INTERNAL_TOKEN`) فقط وقتی استفاده می‌شود که `X_SESSION_ENABLED=true` باشد.
+- **YouTube:** جستجو/ویدیو/کامنت/پلی‌لیست با `YOUTUBE_API_KEY` (Data API v3). `youtube.get_transcript` هرگز transcript حدس نمی‌زند؛ اگر caption عمومی در دسترس نباشد `{available: false, reason}` برمی‌گرداند.
+- **Feature flags:** `X_RESEARCH_ENABLED` و `YOUTUBE_RESEARCH_ENABLED` (هر دو پیش‌فرض `false`). وقتی provider خاموش/بدون credential است، ابزار پیام «فعال نیست» برمی‌گرداند. جزئیات کامل متغیرها در `.env.example` (فقط placeholder، بدون credential واقعی).
+- **سقف‌ها:** هر provider حداکثر نتایج/صفحه، timeout حدود ۱۵ ثانیه، کل تحقیق ۲۵ ثانیه؛ حلقه چت حداکثر ۳ وب‌سرچ + ۶ fetch + ۴ تحقیق X/YouTube/اجتماعی در هر مکالمه انجام می‌دهد.
 
 مدل‌های جدید `AgentConfirmation`، `AgentAuditLog` و `MessageSnapshot` در پنل Django قابل مشاهده‌اند. برای Rollback بدون تغییر کد کافی است `AGENT_ENABLED=false` تنظیم شود.
 
