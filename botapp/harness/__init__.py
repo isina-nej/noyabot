@@ -47,6 +47,7 @@ from .schemas import (
     PlanStep,
     TargetSource,
     deterministic_plan_steps,
+    executable_step_count,
     resolve_max_steps,
     to_harness_step,
 )
@@ -103,6 +104,7 @@ __all__ = [
     "TargetSource",
     "deterministic_plan",
     "deterministic_plan_steps",
+    "executable_step_count",
     "resolve_max_steps",
     "to_harness_step",
     "topological_order",

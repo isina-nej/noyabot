@@ -206,8 +206,16 @@ def validate_plan(
             continue
         _check_step(step, allowlist, notes)
     validate_dag(plan.steps)
+    # Executable budget: finish is a terminal control marker and never an
+    # execution slot, but raw node count still cannot exceed the declared
+    # budget (frozen MAX_STEPS=8 request-wide). A 9th *executable* node
+    # (call_tool/run_code) is always rejected, even if total nodes fit.
+    from .limits import MAX_STEPS as _FROZEN_MAX_STEPS
+    from .schemas import executable_step_count as _exec_count
     if len(plan.steps) > plan.budget.max_steps:
         raise PlanRejected(code="max_steps_exceeded")
     if max_steps is not None and len(plan.steps) > max_steps:
+        raise PlanRejected(code="max_steps_exceeded")
+    if _exec_count(plan.steps) > _FROZEN_MAX_STEPS:
         raise PlanRejected(code="max_steps_exceeded")
     return ValidationResult(steps=topological_order(plan.steps), notes=notes)

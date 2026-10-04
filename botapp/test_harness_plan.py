@@ -186,13 +186,105 @@ class ValidationTests(unittest.TestCase):
         self.assertEqual(cm.exception.code, "max_steps_exceeded")
 
     def test_deterministic_fallback_shape(self):
+        from botapp.harness import executable_step_count
+        from botapp.harness.limits import MAX_STEPS
+
         steps = deterministic_plan_steps()
-        self.assertEqual(len(steps), 9)
         self.assertEqual(steps[-1].action, "finish")
         self.assertEqual(steps[-1].answer, "")
         res = deterministic_plan()
         self.assertEqual(res.error, "deterministic")
-        self.assertEqual(len(res.plan.steps), 9)
+        # Frozen invariant on the BUILT plan: total nodes and executable
+        # nodes both fit MAX_STEPS (the raw frozen chain is capped at build).
+        self.assertLessEqual(len(res.plan.steps), MAX_STEPS)
+        self.assertLessEqual(executable_step_count(res.plan.steps), MAX_STEPS)
+        self.assertLessEqual(res.plan.budget.max_steps, MAX_STEPS)
+        # Raw chain keeps frozen §3 order: 7 tools + code + finish marker.
+        self.assertEqual(
+            [s.action for s in steps],
+            ["call_tool"] * 7 + ["run_code", "finish"],
+        )
+
+    def test_deterministic_executable_chain_never_exceeds_max_steps(self):
+        from botapp.harness import executable_step_count
+        from botapp.harness.limits import MAX_STEPS
+
+        for cap in (None, 5, 8, 12, 200):
+            kw = {} if cap is None else {"max_steps": cap}
+            res = deterministic_plan(**kw)
+            self.assertLessEqual(executable_step_count(res.plan.steps), MAX_STEPS)
+            self.assertLessEqual(len(res.plan.steps), MAX_STEPS)
+            self.assertLessEqual(res.plan.budget.max_steps, MAX_STEPS)
+
+    def test_finish_marker_is_terminal_only_not_execution_slot(self):
+        from botapp.harness import executable_step_count
+
+        steps = deterministic_plan_steps()
+        finishes = [s for s in steps if s.action == "finish"]
+        self.assertEqual(len(finishes), 1)
+        # Finish carries no tool/capability and no executable work.
+        self.assertEqual(finishes[0].tool, "")
+        self.assertEqual(finishes[0].code, "")
+        self.assertEqual(
+            executable_step_count(steps),
+            len([s for s in steps if s.action in ("call_tool", "run_code")]),
+        )
+
+    def test_ninth_executable_tool_step_rejected(self):
+        from botapp.harness.limits import MAX_STEPS
+
+        # 7 executable tools + code + finish marker = 9 nodes / 8 executable:
+        # fits at cap 8. A 9th *executable* tool step must be rejected even
+        # when the declared budget is larger.
+        tools8 = [
+            "analytics.get_message_activity_today",
+            "analytics.get_top_senders_today",
+            "analytics.get_today_summary",
+            "group.get_member_count",
+            "group.get_moderation_status",
+            "group.get_schedules",
+            "audit.get_recent_actions",
+            "group.get_admins",
+        ]
+        self.assertEqual(MAX_STEPS, 8)
+        steps = [
+            {
+                "id": f"s{i + 1:02d}",
+                "depends_on": [f"s{i:02d}"] if i else [],
+                "action": "call_tool",
+                "tool": t,
+                "args": {},
+                "thinking": "t",
+            }
+            for i, t in enumerate(tools8)
+        ]
+        # 9th executable BEFORE the terminal finish marker: 9 executable
+        # nodes + finish = 10 nodes, executable budget (8) must fire.
+        steps.append(
+            {
+                "id": "s09",
+                "depends_on": ["s08"],
+                "action": "call_tool",
+                "tool": "group.get_settings",
+                "args": {},
+                "thinking": "t",
+            }
+        )
+        steps.append(
+            {
+                "id": "s10",
+                "depends_on": ["s09"],
+                "action": "finish",
+                "answer": "پایان.",
+                "thinking": "t",
+            }
+        )
+        with self.assertRaises(PlanRejected) as cm:
+            validate_plan(
+                _plan_dict(steps, max_steps=12),
+                allowlist=[s["tool"] for s in steps if s["action"] == "call_tool"],
+            )
+        self.assertEqual(cm.exception.code, "max_steps_exceeded")
 
     def test_adapter(self):
         adapter = AIPlannerAdapter()

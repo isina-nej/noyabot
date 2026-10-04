@@ -7,11 +7,14 @@ Observer verdict. run_code via agent sandbox only. finish returns V10 text,
 other failures use _fallback_answer.
 
 Request-wide budgets (botapp/harness/limits.py) are shared by the whole
-request, never reset per turn: total runtime 90s, step cap (max 8),
-tool-call cap 12, replan cap 2, per-step timeout <=15s, result size 4000
-(enforced inside the executor/state truncation helpers). One request-level
-run in the RunStore owns every turn, so history accumulates instead of
-keeping only the last single-step execution.
+request, never reset per turn: total runtime 90s, executable step cap
+(max 8; finish is a terminal control marker finalized outside the
+executable budget), tool-call cap 12, replan cap 2, per-step timeout
+<=15s, result size 4000 (enforced inside the executor/state truncation
+helpers). Every blocking call per turn -- planner/LLM, tool execution,
+sandbox -- is bounded by the request's remaining runtime. One
+request-level run in the RunStore owns every turn, so history accumulates
+instead of keeping only the last single-step execution.
 
 Plan semantics: per-turn decisions use validate_raw_step (V1-V3, V6-V8,
 V10 structural checks + self-call refusal). Full-plan checks
@@ -35,7 +38,9 @@ Frozen behavior preserved (C1-C9, V1-V12, §5/§6, §10, §14, §15):
 
 from __future__ import annotations
 
+import asyncio
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -117,6 +122,7 @@ async def run_application_investigation(
     max_steps: int | None = None,
     step_planner=None,
     store=None,
+    clock=None,
 ) -> BridgeResult:
     """Run the new chain for a real application context.
 
@@ -140,7 +146,7 @@ async def run_application_investigation(
         PER_STEP_TIMEOUT_S,
     )
     from botapp.harness.observer import Observer
-    from botapp.harness.schemas import resolve_max_steps
+    from botapp.harness.schemas import executable_step_count, resolve_max_steps
     from botapp.harness.security import (
         AuthVerdict,
         authorize_harness_step,
@@ -162,9 +168,10 @@ async def run_application_investigation(
         cap = resolve_max_steps(_setting("AGENT_HARNESS_MAX_STEPS", 8) if max_steps is None else max_steps)
     except PlanRejected:
         cap = 5
-    # Request step limit: maximum MAX_STEPS (8). The deterministic §3 chain
-    # below is fixed-length and may extend cap to fit itself (frozen planner
-    # behavior); the AI/planner turn loop never exceeds MAX_STEPS.
+    # Request step limit: frozen maximum MAX_STEPS (8). The deterministic §3
+    # executable chain is itself <=8 (finish is a terminal control marker
+    # finalized outside the executable step budget); the turn loop never
+    # exceeds MAX_STEPS for either mode.
     cap = min(cap, MAX_STEPS)
     use_ai = bool(_setting("AGENT_AI_ENABLED", True)) and bool(_setting("AGENT_HARNESS_AI_ENABLED", True))
 
@@ -190,21 +197,15 @@ async def run_application_investigation(
     active.create(request_run)
     request_run_id = request_run.run_id
     request_tool_calls = 0
-    request_start = None
-    try:
-        import time as _time
-
-        request_start = _time.monotonic()
-    except Exception:  # pragma: no cover - monotonic always available
-        request_start = None
+    # Injectable clock for tests: clock() -> monotonic seconds. Defaults to
+    # time.monotonic; tests pass a fake to simulate deadline states without
+    # touching the global time module (asyncio also uses monotonic).
+    _clock = clock or time.monotonic
+    request_start = _clock()
 
     def _request_elapsed() -> float:
-        if request_start is None:
-            return 0.0
         try:
-            import time as _time
-
-            return max(0.0, _time.monotonic() - request_start)
+            return max(0.0, _clock() - request_start)
         except Exception:  # pragma: no cover - defensive
             return 0.0
 
@@ -231,10 +232,10 @@ async def run_application_investigation(
         try:
             checked = validate_plan(
                 {"kind": "harness.plan/v1",
-                 "budget": {"max_steps": max(cap, len(raw))},
+                 "budget": {"max_steps": cap},
                  "steps": raw},
                 allowlist=allowlist,
-                max_steps=max(cap, len(raw)),
+                max_steps=cap,
                 allow_empty_finish=True,
             )
             det_steps = checked.steps
@@ -310,11 +311,13 @@ async def run_application_investigation(
 
     _sync_request_run(status="running")
     det_exhausted = False
-    # Deterministic §3 chain is fixed length; the turn budget must fit it
-    # (legacy loop runs observations only, cap applies to AI turns).
     det_mode = not ai_mode
     if det_mode:
-        cap = max(cap, len(det_steps))
+        # Invariant: deterministic_plan() already enforces total nodes and
+        # executable nodes <= frozen MAX_STEPS; det_steps here is the
+        # validated, capped chain consumed in order below.
+        assert executable_step_count(det_steps) <= MAX_STEPS, "det executable chain exceeds MAX_STEPS"
+        assert len(det_steps) <= cap, "det plan exceeds request step cap"
     turn = 0
     while turn < cap:
         turn += 1
@@ -329,14 +332,33 @@ async def run_application_investigation(
                 "code": s.code, "answer": s.answer, "thinking": s.thinking,
             }
         else:
+            remaining = MAX_TOTAL_RUNTIME_S - _request_elapsed()
+            if remaining <= 0:
+                rid, rs, rv = _finalize()
+                return _done(ok=True, answer=_fallback_answer(observations) or "به سقف بودجه زمانی رسیدم؛ داده‌های جمع‌شده را خلاصه کردم.",
+                             steps_used=turn - 1, observations=observations, error="max_steps",
+                             run_id=rid, run_status=rs, observer_verdict=rv)
             try:
-                maybe = planner(
-                    user_text=user_text, memory=_format_memory(observations),
-                    allowed_tools=allowlist, chat_id=ctx.chat_id, step=turn, max_steps=cap,
-                )
-                import inspect as _inspect
+                async def _invoke_planner():
+                    maybe = planner(
+                        user_text=user_text, memory=_format_memory(observations),
+                        allowed_tools=allowlist, chat_id=ctx.chat_id, step=turn, max_steps=cap,
+                    )
+                    import inspect as _inspect
 
-                decision = await maybe if _inspect.isawaitable(maybe) else maybe
+                    return await maybe if _inspect.isawaitable(maybe) else maybe
+
+                # Bound every blocking planner/LLM call by the request's
+                # remaining runtime (provider timeout is 45s; remaining wins
+                # when the deadline is nearer). No background task survives:
+                # on timeout the result is discarded and never executed.
+                decision = await asyncio.wait_for(_invoke_planner(), timeout=max(remaining, 0.1))
+            except (asyncio.TimeoutError, TimeoutError):
+                logger.warning("harness planner timed out chat=%s step=%s remaining=%.1fs", ctx.chat_id, turn, remaining)
+                rid, rs, rv = _finalize()
+                return _done(ok=True, answer=_fallback_answer(observations) or "به سقف بودجه زمانی رسیدم؛ داده‌های جمع‌شده را خلاصه کردم.",
+                             steps_used=turn - 1, observations=observations, error="max_steps",
+                             run_id=rid, run_status=rs, observer_verdict=rv)
             except Exception:
                 logger.exception("harness planner failed chat=%s step=%s", ctx.chat_id, turn)
                 if observations:
@@ -348,9 +370,9 @@ async def run_application_investigation(
                 try:
                     checked = validate_plan(
                         {"kind": "harness.plan/v1",
-                         "budget": {"max_steps": max(cap, len(raw))},
+                         "budget": {"max_steps": cap},
                          "steps": raw},
-                        allowlist=allowlist, max_steps=max(cap, len(raw)), allow_empty_finish=True,
+                        allowlist=allowlist, max_steps=cap, allow_empty_finish=True,
                     )
                     det_steps, det_idx, det_mode = checked.steps, 0, True
                     turn -= 1

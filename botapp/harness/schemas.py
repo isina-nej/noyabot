@@ -14,6 +14,10 @@ from pydantic import BaseModel, ConfigDict, Field, field_validator
 PLAN_KIND = "harness.plan/v1"
 SELF_TOOL_NAME = "harness.investigate"
 
+# Frozen §3 fallback chain (7 tools + code pass + finish marker). Executable
+# steps (call_tool + run_code) are capped at frozen MAX_STEPS=8 at plan-build
+# time via deterministic_plan(); finish is a terminal control marker finalized
+# outside the executable step budget (see bridge finalization).
 DETERMINISTIC_TOOLS = (
     "analytics.get_message_activity_today",
     "analytics.get_top_senders_today",
@@ -112,11 +116,23 @@ def resolve_max_steps(setting: Any = None) -> int:
     return value
 
 
+def executable_step_count(steps: list[PlanStep]) -> int:
+    """Count executable plan nodes (call_tool + run_code).
+
+    The finish node is a terminal control marker, not an execution slot:
+    it never invokes a capability/tool, never consumes tool-call budget,
+    and is finalized outside the executable step budget.
+    """
+    return sum(1 for s in steps if s.action in ("call_tool", "run_code"))
+
+
 def deterministic_plan_steps() -> list[PlanStep]:
     """Frozen §3 fallback: read tools in fixed order, code pass, finish.
 
     Finish answer is empty on purpose: V10 routes it to _fallback_answer
-    plus the provenance footer at answer time.
+    plus the provenance footer at answer time. Use executable_step_count()
+    for the executable budget; the finish marker is terminal-only and never
+    an execution slot.
     """
     steps: list[PlanStep] = []
     prev: str | None = None

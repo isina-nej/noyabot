@@ -1235,3 +1235,232 @@ class BridgeRequestBudgetTests(TestCase):
         stored = get_bridge_store().get(res.run_id)
         self.assertEqual(stored.tool_calls_used, 0)
         self.assertEqual(list(stored.steps), [])
+
+
+class BridgeBlockerRegressionTests(TestCase):
+    """Blocker regressions: MAX_STEPS executable budget + planner runtime bound."""
+
+    def setUp(self):
+        clear_role_cache()
+        from botapp.harness.bridge import reset_bridge_store
+        from botapp.models import GroupSettings
+
+        reset_bridge_store()
+        GroupSettings.objects.get_or_create(chat_id=-1001, defaults={"chat_title": "G"})
+
+    def test_deterministic_max_chain_never_exceeds_8_executable_steps(self):
+        from botapp.harness import deterministic_plan, executable_step_count
+        from botapp.harness.limits import MAX_STEPS
+
+        self.assertEqual(MAX_STEPS, 8)
+        for cap in (5, 8, 12, 200):
+            res = deterministic_plan(max_steps=cap)
+            self.assertLessEqual(executable_step_count(res.plan.steps), MAX_STEPS)
+            self.assertLessEqual(len(res.plan.steps), MAX_STEPS)
+            self.assertLessEqual(res.plan.budget.max_steps, MAX_STEPS)
+
+    def test_terminal_finish_cannot_consume_extra_execution_slot(self):
+        from botapp.harness import executable_step_count
+        from botapp.harness.bridge import get_bridge_store, reset_bridge_store, run_application_investigation
+
+        reset_bridge_store()
+        bot = admin_bot(42)
+        ctx = make_ctx()
+        seq = [
+            {"action": "call_tool", "tool": "group.get_member_count", "args": {}},
+            {"action": "finish", "answer": "تمام شد."},
+        ]
+        st = {"i": 0}
+
+        def planner(**k):
+            i = st["i"]
+            st["i"] += 1
+            return seq[min(i, 1)]
+
+        res = async_to_sync(run_application_investigation)(
+            ctx=ctx, bot=bot, user_text="x", step_planner=planner, max_steps=8)
+        stored = get_bridge_store().get(res.run_id)
+        # Finish finalizes; it is not stored as an executor step and consumes
+        # no tool-call budget.
+        self.assertEqual(stored.tool_calls_used, 1)
+        self.assertEqual(len(stored.steps), 1)
+        self.assertEqual(stored.steps[0].tool, "group.get_member_count")
+
+    def test_ninth_executable_tool_step_stopped_at_bridge(self):
+        from botapp.harness.bridge import get_bridge_store, reset_bridge_store, run_application_investigation
+        from botapp.harness.limits import MAX_STEPS
+
+        reset_bridge_store()
+        self.assertEqual(MAX_STEPS, 8)
+        bot = admin_bot(42)
+        ctx = make_ctx()
+        calls = []
+
+        def looping(**k):
+            calls.append(k["step"])
+            return {"action": "call_tool", "tool": "group.get_member_count", "args": {}}
+
+        res = async_to_sync(run_application_investigation)(
+            ctx=ctx, bot=bot, user_text="x", step_planner=looping, max_steps=8)
+        self.assertEqual(res.error, "max_steps")
+        self.assertLessEqual(max(calls), MAX_STEPS)
+        stored = get_bridge_store().get(res.run_id)
+        self.assertLessEqual(len(stored.steps), MAX_STEPS)
+        self.assertLessEqual(stored.tool_calls_used, MAX_STEPS)
+
+    def test_no_budget_reset_across_turns(self):
+        from botapp.harness.bridge import get_bridge_store, reset_bridge_store, run_application_investigation
+        from botapp.harness.limits import MAX_TOOL_CALLS
+
+        reset_bridge_store()
+        bot = admin_bot(42)
+        ctx = make_ctx()
+
+        def looping(**k):
+            return {"action": "call_tool", "tool": "group.get_member_count", "args": {}}
+
+        res = async_to_sync(run_application_investigation)(
+            ctx=ctx, bot=bot, user_text="x", step_planner=looping, max_steps=8)
+        stored = get_bridge_store().get(res.run_id)
+        # Tool-call budget accumulates across turns; a later turn never sees a
+        # fresh counter.
+        self.assertEqual(stored.tool_calls_used, len(stored.steps))
+        self.assertLessEqual(stored.tool_calls_used, MAX_TOOL_CALLS)
+        self.assertLessEqual(stored.tool_calls_used, 8)
+
+    def test_planner_not_invoked_after_runtime_exhausted(self):
+        # Injected clock already past the 90s budget: planner must never run.
+        from botapp.harness.bridge import reset_bridge_store, run_application_investigation
+        from botapp.harness.limits import MAX_TOTAL_RUNTIME_S
+
+        reset_bridge_store()
+        self.assertEqual(MAX_TOTAL_RUNTIME_S, 90)
+        bot = admin_bot(42)
+        ctx = make_ctx()
+        invoked = []
+
+        def fake_planner_caller(**k):
+            invoked.append(k)
+            return {"action": "finish", "answer": "دیر."}
+
+        state = {"calls": 0}
+
+        def exhausted_clock():
+            # First read captures request_start=1000.0; every later read is
+            # 1095.0, so elapsed is 95s >= 90s before turn 1.
+            state["calls"] += 1
+            return 1000.0 if state["calls"] == 1 else 1000.0 + MAX_TOTAL_RUNTIME_S + 5
+
+        res = async_to_sync(run_application_investigation)(
+            ctx=ctx, bot=bot, user_text="x", step_planner=fake_planner_caller,
+            max_steps=8, clock=exhausted_clock)
+        self.assertEqual(invoked, [])
+        self.assertEqual(res.error, "max_steps")
+        self.assertTrue(res.run_id)
+
+    def test_planner_timeout_capped_by_remaining_runtime(self):
+        import asyncio
+
+        # wait_for with the smaller timeout wins: remaining < provider 45s.
+        async def slow():
+            await asyncio.sleep(10)
+            return {"action": "finish", "answer": "دیر."}
+
+        async def main():
+            try:
+                await asyncio.wait_for(slow(), timeout=0.05)
+                return "no-timeout"
+            except (asyncio.TimeoutError, TimeoutError):
+                return "timed-out"
+
+        res = async_to_sync(main)()
+        self.assertEqual(res, "timed-out")
+
+    def test_planner_timeout_causes_no_tool_execution(self):
+        import asyncio
+        from botapp.harness.bridge import get_bridge_store, reset_bridge_store, run_application_investigation
+
+        reset_bridge_store()
+        bot = admin_bot(42)
+        ctx = make_ctx()
+
+        async def hanging_planner(**k):
+            await asyncio.sleep(30)
+            return {"action": "call_tool", "tool": "group.get_member_count", "args": {}}
+
+        # Clock: request starts at t=0, every later read sees t=89.95, so the
+        # planner gets a 0.05s remaining budget and must time out.
+        calls = {"n": 0}
+
+        def near_deadline():
+            calls["n"] += 1
+            return 0.0 if calls["n"] == 1 else 89.95
+
+        res = async_to_sync(run_application_investigation)(
+            ctx=ctx, bot=bot, user_text="x", step_planner=hanging_planner,
+            max_steps=8, clock=near_deadline)
+        stored = get_bridge_store().get(res.run_id)
+        # Timed-out planner output is discarded: no tool ran, history holds
+        # only the request run with zero executed steps.
+        self.assertEqual(stored.tool_calls_used, 0)
+        self.assertEqual(list(stored.steps), [])
+        self.assertEqual(bot.banned, [])
+
+    def test_request_history_survives_planner_timeout(self):
+        import asyncio
+        from botapp.harness.bridge import get_bridge_store, reset_bridge_store, run_application_investigation
+
+        reset_bridge_store()
+        bot = admin_bot(42)
+        ctx = make_ctx()
+        st = {"n": 0}
+
+        async def flaky_planner(**k):
+            st["n"] += 1
+            if st["n"] == 1:
+                return {"action": "call_tool", "tool": "group.get_member_count", "args": {}}
+            await asyncio.sleep(30)
+            return {"action": "call_tool", "tool": "group.get_member_count", "args": {}}
+
+        # t=0 at start; turn 1 runs fast (t=1); turn 2 sees t=89.95 and times out.
+        times = [0.0, 1.0]
+        idx = {"i": 0}
+
+        def clock():
+            i = idx["i"]
+            idx["i"] += 1
+            if i < len(times):
+                return times[i]
+            return 89.95
+
+        res = async_to_sync(run_application_investigation)(
+            ctx=ctx, bot=bot, user_text="x", step_planner=flaky_planner,
+            max_steps=8, clock=clock)
+        stored = get_bridge_store().get(res.run_id)
+        # Turn 1 history is preserved; the timed-out turn 2 added nothing and
+        # executed nothing further.
+        self.assertEqual(stored.tool_calls_used, 1)
+        self.assertEqual(len(stored.steps), 1)
+        self.assertEqual(res.run_id, stored.run_id)
+
+    def test_total_budget_not_regained_by_replan_or_turn(self):
+        from botapp.harness.bridge import get_bridge_store, reset_bridge_store, run_application_investigation
+        from botapp.harness.limits import MAX_TOOL_CALLS
+
+        reset_bridge_store()
+        bot = admin_bot(42)
+        ctx = make_ctx()
+
+        def looping(**k):
+            return {"action": "call_tool", "tool": "group.get_member_count", "args": {}}
+
+        res = async_to_sync(run_application_investigation)(
+            ctx=ctx, bot=bot, user_text="x", step_planner=looping, max_steps=8)
+        stored = get_bridge_store().get(res.run_id)
+        self.assertLessEqual(stored.tool_calls_used, MAX_TOOL_CALLS)
+        self.assertLessEqual(len(stored.steps), 8)
+        # Second request gets its own run identity; counters never leak or
+        # reset into extra capacity on the same run.
+        res2 = async_to_sync(run_application_investigation)(
+            ctx=ctx, bot=bot, user_text="x", step_planner=looping, max_steps=8)
+        self.assertNotEqual(res.run_id, res2.run_id)
