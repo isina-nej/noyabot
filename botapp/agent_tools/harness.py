@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 from botapp.agent.context import AgentContext
-from botapp.agent.harness import run_investigation
 from botapp.agent.permissions import ANALYTICS_READ
 from botapp.agent.registry import register_tool
 from botapp.agent.risk import LOW
@@ -11,7 +10,9 @@ from botapp.agent.schemas import EmptyParams
 
 
 async def investigate(ctx: AgentContext, bot, params) -> str:
-    result = await run_investigation(
+    from botapp.harness.bridge import run_application_investigation
+
+    result = await run_application_investigation(
         ctx=ctx,
         bot=bot,
         user_text=ctx.command_text or "بررسی کامل",
