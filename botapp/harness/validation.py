@@ -206,15 +206,18 @@ def validate_plan(
             continue
         _check_step(step, allowlist, notes)
     validate_dag(plan.steps)
-    # Executable budget: finish is a terminal control marker and never an
-    # execution slot, but raw node count still cannot exceed the declared
-    # budget (frozen MAX_STEPS=8 request-wide). A 9th *executable* node
-    # (call_tool/run_code) is always rejected, even if total nodes fit.
+    # Step budget: only executable nodes (call_tool/run_code) consume the
+    # step budget. The single terminal finish marker is control-only: it
+    # never executes through HarnessExecutor, consumes no tool-call budget,
+    # and takes no executable slot. Frozen request-wide ceiling MAX_STEPS=8
+    # always applies to executable nodes; a 9th executable node is always
+    # rejected. The declared per-plan budget likewise counts executable
+    # nodes only, so the full frozen chain (8 executable + finish) fits.
     from .limits import MAX_STEPS as _FROZEN_MAX_STEPS
     from .schemas import executable_step_count as _exec_count
-    if len(plan.steps) > plan.budget.max_steps:
+    if _exec_count(plan.steps) > plan.budget.max_steps:
         raise PlanRejected(code="max_steps_exceeded")
-    if max_steps is not None and len(plan.steps) > max_steps:
+    if max_steps is not None and _exec_count(plan.steps) > max_steps:
         raise PlanRejected(code="max_steps_exceeded")
     if _exec_count(plan.steps) > _FROZEN_MAX_STEPS:
         raise PlanRejected(code="max_steps_exceeded")

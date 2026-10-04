@@ -97,7 +97,12 @@ def _obs(kind: str, name: str, summary: str, data: Any = None):
 
 
 def _det_payload(allowlist: list[str], cap: int):
-    """Filtered deterministic §3 plan (skip unregistered tools, rechain DAG)."""
+    """Filtered deterministic §3 plan (skip unregistered tools, rechain DAG).
+
+    cap is the request turn cap and does NOT truncate required chain
+    content here; the loop below consumes the executable prefix fitting
+    cap while the finish marker finalizes outside the executable budget.
+    """
     from botapp.harness.planner import deterministic_plan
 
     planned = deterministic_plan(max_steps=cap)
@@ -168,11 +173,15 @@ async def run_application_investigation(
         cap = resolve_max_steps(_setting("AGENT_HARNESS_MAX_STEPS", 8) if max_steps is None else max_steps)
     except PlanRejected:
         cap = 5
-    # Request step limit: frozen maximum MAX_STEPS (8). The deterministic §3
-    # executable chain is itself <=8 (finish is a terminal control marker
-    # finalized outside the executable step budget); the turn loop never
-    # exceeds MAX_STEPS for either mode.
-    cap = min(cap, MAX_STEPS)
+    # Request step limit: frozen maximum MAX_STEPS (8) for executable turns.
+    # The deterministic §3 executable chain is itself 8 (finish is a
+    # terminal control marker finalized outside the executable budget); the
+    # turn loop never exceeds MAX_STEPS for either mode. The deterministic
+    # chain always runs to completion (its 8 executable steps fit MAX_STEPS);
+    # a smaller per-request cap only limits the AI/planner turn loop.
+    req_cap = min(cap, MAX_STEPS)
+    det_cap = MAX_STEPS
+    cap = req_cap
     use_ai = bool(_setting("AGENT_AI_ENABLED", True)) and bool(_setting("AGENT_HARNESS_AI_ENABLED", True))
 
     allowlist = build_harness_allowlist()
@@ -228,14 +237,14 @@ async def run_application_investigation(
 
     det_steps, det_idx, plan_error = None, 0, ""
     if not ai_mode:
-        raw, plan_error = _det_payload(allowlist, cap)
+        raw, plan_error = _det_payload(allowlist, det_cap)
         try:
             checked = validate_plan(
                 {"kind": "harness.plan/v1",
-                 "budget": {"max_steps": cap},
+                 "budget": {"max_steps": det_cap},
                  "steps": raw},
                 allowlist=allowlist,
-                max_steps=cap,
+                max_steps=None,
                 allow_empty_finish=True,
             )
             det_steps = checked.steps
@@ -313,20 +322,28 @@ async def run_application_investigation(
     det_exhausted = False
     det_mode = not ai_mode
     if det_mode:
-        # Invariant: deterministic_plan() already enforces total nodes and
-        # executable nodes <= frozen MAX_STEPS; det_steps here is the
-        # validated, capped chain consumed in order below.
+        # Invariant: full frozen chain is 8 executable + terminal finish
+        # marker; the finish marker takes no executable slot. det_cap is
+        # always MAX_STEPS so the full required chain executes; the AI turn
+        # loop above still respects the per-request cap.
         assert executable_step_count(det_steps) <= MAX_STEPS, "det executable chain exceeds MAX_STEPS"
-        assert len(det_steps) <= cap, "det plan exceeds request step cap"
+        det_queue = [s for s in det_steps if s.action in ("call_tool", "run_code")][:det_cap]
+        assert len(det_queue) == executable_step_count(det_steps), "det chain must run complete" 
     turn = 0
-    while turn < cap:
+    exec_turns = 0
+    # det queue holds exactly the executable prefix; the loop runs one extra
+    # terminal iteration so the finish marker finalizes WITHOUT consuming an
+    # executor turn or tool-call budget (tail branches on det_exhausted).
+    det_limit = (len(det_queue) + 1) if det_mode else cap
+    while turn < (det_limit if det_mode else cap):
         turn += 1
         if det_mode:
-            if det_idx >= len(det_steps):
+            if det_idx >= len(det_queue):
                 det_exhausted = True
                 break
-            s = det_steps[det_idx]
+            s = det_queue[det_idx]
             det_idx += 1
+            exec_turns += 1
             decision = {
                 "action": s.action, "tool": s.tool, "args": {},
                 "code": s.code, "answer": s.answer, "thinking": s.thinking,
@@ -366,13 +383,13 @@ async def run_application_investigation(
                     return _done(ok=True, answer=_fallback_answer(observations), steps_used=turn,
                                  observations=observations, error="llm_step_failed",
                                  run_id=rid, run_status=rs, observer_verdict=rv)
-                raw, plan_error = _det_payload(allowlist, cap)
+                raw, plan_error = _det_payload(allowlist, det_cap)
                 try:
                     checked = validate_plan(
                         {"kind": "harness.plan/v1",
-                         "budget": {"max_steps": cap},
+                         "budget": {"max_steps": det_cap},
                          "steps": raw},
-                        allowlist=allowlist, max_steps=cap, allow_empty_finish=True,
+                        allowlist=allowlist, max_steps=None, allow_empty_finish=True,
                     )
                     det_steps, det_idx, det_mode = checked.steps, 0, True
                     turn -= 1
@@ -445,9 +462,11 @@ async def run_application_investigation(
     answer = _fallback_answer(observations) or "به سقف گام‌های بررسی رسیدم؛ داده‌های جمع‌شده را خلاصه کردم."
     rid, rs, rv = _finalize()
     if det_exhausted:
+        # Terminal finish marker: control-only finalization, not an executor
+        # turn; consumes no tool-call budget and no extra executable slot.
         answer = (f"{answer}\n\n——\nدرخواست: {_truncate(user_text, 200)}\n"
                   "این بررسی بدون برنامه‌ریز LLM و فقط با ابزارهای خواندنی انجام شد.")
-        return _done(ok=True, answer=answer, steps_used=len(observations), observations=observations,
+        return _done(ok=True, answer=answer, steps_used=exec_turns, observations=observations,
                      error=plan_error or "deterministic",
                      run_id=rid, run_status=rs, observer_verdict=rv)
     return _done(ok=True, answer=answer, steps_used=cap, observations=observations, error="max_steps",

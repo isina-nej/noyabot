@@ -188,33 +188,46 @@ class ValidationTests(unittest.TestCase):
     def test_deterministic_fallback_shape(self):
         from botapp.harness import executable_step_count
         from botapp.harness.limits import MAX_STEPS
+        from botapp.harness.schemas import DETERMINISTIC_TOOLS
 
         steps = deterministic_plan_steps()
         self.assertEqual(steps[-1].action, "finish")
         self.assertEqual(steps[-1].answer, "")
         res = deterministic_plan()
         self.assertEqual(res.error, "deterministic")
-        # Frozen invariant on the BUILT plan: total nodes and executable
-        # nodes both fit MAX_STEPS (the raw frozen chain is capped at build).
-        self.assertLessEqual(len(res.plan.steps), MAX_STEPS)
-        self.assertLessEqual(executable_step_count(res.plan.steps), MAX_STEPS)
-        self.assertLessEqual(res.plan.budget.max_steps, MAX_STEPS)
-        # Raw chain keeps frozen §3 order: 7 tools + code + finish marker.
+        # Full frozen §3 chain, untruncated: 7 tools + code + finish marker,
+        # i.e. exactly 8 executable steps; budget counts executable nodes.
+        self.assertEqual(len(DETERMINISTIC_TOOLS), 7)
         self.assertEqual(
             [s.action for s in steps],
             ["call_tool"] * 7 + ["run_code", "finish"],
         )
+        self.assertEqual(
+            [s.tool for s in steps if s.action == "call_tool"],
+            list(DETERMINISTIC_TOOLS),
+        )
+        self.assertEqual(len(res.plan.steps), 9)
+        self.assertEqual(executable_step_count(res.plan.steps), 8)
+        self.assertEqual(res.plan.budget.max_steps, 8)
+        self.assertEqual(MAX_STEPS, 8)
 
-    def test_deterministic_executable_chain_never_exceeds_max_steps(self):
+    def test_deterministic_full_chain_preserved_regardless_of_cap(self):
         from botapp.harness import executable_step_count
         from botapp.harness.limits import MAX_STEPS
+        from botapp.harness.schemas import DETERMINISTIC_TOOLS
 
+        # No required tool is ever truncated: every cap returns all 7 tools
+        # in frozen order + code pass + finish marker.
         for cap in (None, 5, 8, 12, 200):
             kw = {} if cap is None else {"max_steps": cap}
             res = deterministic_plan(**kw)
-            self.assertLessEqual(executable_step_count(res.plan.steps), MAX_STEPS)
-            self.assertLessEqual(len(res.plan.steps), MAX_STEPS)
-            self.assertLessEqual(res.plan.budget.max_steps, MAX_STEPS)
+            self.assertEqual(
+                [s.tool for s in res.plan.steps if s.action == "call_tool"],
+                list(DETERMINISTIC_TOOLS),
+            )
+            self.assertEqual(executable_step_count(res.plan.steps), 8)
+            self.assertEqual(res.plan.budget.max_steps, 8)
+            self.assertEqual(MAX_STEPS, 8)
 
     def test_finish_marker_is_terminal_only_not_execution_slot(self):
         from botapp.harness import executable_step_count

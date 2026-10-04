@@ -1248,16 +1248,57 @@ class BridgeBlockerRegressionTests(TestCase):
         reset_bridge_store()
         GroupSettings.objects.get_or_create(chat_id=-1001, defaults={"chat_title": "G"})
 
-    def test_deterministic_max_chain_never_exceeds_8_executable_steps(self):
+    def test_deterministic_full_chain_exact_tool_coverage(self):
+        # Exact coverage, not mere counts: all 7 frozen tools in order +
+        # code pass + finish marker; 8 executable; budget counts executable.
         from botapp.harness import deterministic_plan, executable_step_count
         from botapp.harness.limits import MAX_STEPS
+        from botapp.harness.schemas import DETERMINISTIC_TOOLS
 
         self.assertEqual(MAX_STEPS, 8)
+        self.assertEqual(
+            list(DETERMINISTIC_TOOLS),
+            [
+                "analytics.get_message_activity_today",
+                "analytics.get_top_senders_today",
+                "analytics.get_today_summary",
+                "group.get_member_count",
+                "group.get_moderation_status",
+                "group.get_schedules",
+                "audit.get_recent_actions",
+            ],
+        )
         for cap in (5, 8, 12, 200):
             res = deterministic_plan(max_steps=cap)
-            self.assertLessEqual(executable_step_count(res.plan.steps), MAX_STEPS)
-            self.assertLessEqual(len(res.plan.steps), MAX_STEPS)
-            self.assertLessEqual(res.plan.budget.max_steps, MAX_STEPS)
+            self.assertEqual(
+                [s.tool for s in res.plan.steps if s.action == "call_tool"],
+                list(DETERMINISTIC_TOOLS),
+            )
+            self.assertEqual(executable_step_count(res.plan.steps), 8)
+            self.assertEqual(res.plan.budget.max_steps, 8)
+
+    def test_deterministic_bridge_runs_all_seven_tools_plus_code(self):
+        # End-to-end: the bridge deterministic path executes every frozen
+        # tool (incl. audit.get_recent_actions) + the code pass, then
+        # finalizes via the finish marker without an extra executor slot.
+        from botapp.harness.bridge import get_bridge_store, reset_bridge_store, run_application_investigation
+        from botapp.harness.schemas import DETERMINISTIC_TOOLS
+
+        reset_bridge_store()
+        bot = admin_bot(42)
+        ctx = make_ctx()
+        with self.settings(AGENT_AI_ENABLED=False):
+            res = async_to_sync(run_application_investigation)(
+                ctx=ctx, bot=bot, user_text="x", max_steps=8)
+        # Deterministic path: every frozen tool + code pass executed.
+        stored = get_bridge_store().get(res.run_id)
+        tools = [s.tool for s in stored.steps]
+        for name in DETERMINISTIC_TOOLS:
+            self.assertIn(name, tools)
+        self.assertIn("audit.get_recent_actions", tools)
+        kinds = [o.kind for o in res.observations]
+        self.assertIn("code", kinds)
+        self.assertEqual(res.error, "deterministic")
 
     def test_terminal_finish_cannot_consume_extra_execution_slot(self):
         from botapp.harness import executable_step_count
