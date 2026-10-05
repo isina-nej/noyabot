@@ -804,6 +804,42 @@ class OrchestratorIntegrationTests(TestCase):
         self.assertTrue(result.error)
         self.assertIn("Reply", result.text)
 
+    def test_ambiguous_target_mute_all_members_denied(self):
+        bot = admin_bot(42)
+        msg = make_message("mute", user_id=42)  # no reply
+        result = self.run_cmd(bot, msg, "همه اعضا را میوت کن")
+        self.assertTrue(result.error)
+        self.assertIn("کاربر هدف مشخص نیست", result.text)
+        audit = AgentAuditLog.objects.filter(chat_id=self.chat_id).latest("created_at")
+        self.assertEqual(audit.error_code, "ambiguous_target")
+
+    def test_protected_bot_target_denied(self):
+        bot = admin_bot(42)
+        msg = make_message("mute", user_id=42, reply_user_id=bot.id, reply_message_id=4)
+        result = self.run_cmd(bot, msg, "این کاربر رو ۱۰ دقیقه ساکت کن")
+        self.assertTrue(result.error)
+        self.assertIn("نمی‌توان این عملیات را روی خود ربات انجام داد", result.text)
+        audit = AgentAuditLog.objects.filter(chat_id=self.chat_id).latest("created_at")
+        self.assertEqual(audit.error_code, "protected_target")
+
+    @override_settings(AGENT_HARNESS_ENABLED=True, AGENT_AI_ENABLED=False)
+    def test_actual_enabled_harness_path_with_bridge_executor_and_run_id(self):
+        from botapp.harness.bridge import get_bridge_store, get_last_bridge_result, reset_bridge_store
+
+        reset_bridge_store()
+        bot = admin_bot(42)
+        msg = make_message("بررسی کامل کن", user_id=42)
+        result = self.run_cmd(bot, msg, "بررسی کامل کن")
+        self.assertFalse(result.error)
+        bridged = get_last_bridge_result()
+        self.assertIsNotNone(bridged)
+        self.assertTrue(bridged.run_id)
+        self.assertTrue(bridged.observer_verdict)
+        stored = get_bridge_store().get(bridged.run_id)
+        self.assertIsNotNone(stored)
+        self.assertEqual(stored.run_id, bridged.run_id)
+        self.assertTrue(stored.steps)
+
     def test_protected_admin_target(self):
         bot = admin_bot(42, target_id=7, target_admin=True)
         msg = make_message("ban", user_id=42, reply_user_id=7, reply_message_id=4)
@@ -1028,6 +1064,29 @@ class TriggerRegressionTests(TestCase):
         matched = async_to_sync(AgentTriggerFilter().__call__)(msg, bot)
         self.assertTrue(bool(matched))
         self.assertIn("تحلیل", matched["agent_command"])
+
+    def test_reply_text_injection_analysis_not_routed_to_agent(self):
+        bot = admin_bot(42)
+        cmd = "این متن رو از نظر تلاش برای تزریق دستور بررسی کن؛ فقط تحلیل کن"
+        self.assertIsNone(parse(cmd))
+        msg = make_message(
+            f"نویا {cmd}",
+            user_id=42,
+            reply_user_id=99,
+            reply_message_id=12,
+        )
+        matched = async_to_sync(AgentTriggerFilter().__call__)(msg, bot)
+        self.assertFalse(matched)
+
+    def test_generic_group_analytics_routes_to_agent(self):
+        bot = admin_bot(42)
+        d = parse("گروه رو تحلیل کن")
+        self.assertIsNotNone(d)
+        self.assertEqual(d.tool, "analytics.generate_briefing")
+        msg = make_message("نویا، گروه رو تحلیل کن", user_id=42)
+        matched = async_to_sync(AgentTriggerFilter().__call__)(msg, bot)
+        self.assertTrue(bool(matched))
+        self.assertIn("گروه رو تحلیل کن", matched["agent_command"])
 
 
 # --- Integration: message archive & snapshots -------------------------------

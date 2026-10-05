@@ -360,11 +360,29 @@ async def _ai_narrative(facts_text: str) -> str | None:
                 },
             )
             response.raise_for_status()
-            data = response.json()
+            text = (response.text or "").strip()
+            if not text:
+                logger.warning("analytics briefing AI returned empty body (status=%s)", response.status_code)
+                return None
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.warning(
+                    "analytics briefing AI returned non-JSON (status=%s): %s",
+                    response.status_code,
+                    type(json_err).__name__,
+                )
+                return None
             content = data["choices"][0]["message"]["content"]
             return (content or "").strip() or None
-    except Exception:  # noqa: BLE001
-        logger.exception("analytics briefing AI call failed")
+    except httpx.ReadTimeout:
+        logger.warning("analytics briefing AI call timed out (ReadTimeout) after 45s")
+        return None
+    except httpx.TimeoutException:
+        logger.warning("analytics briefing AI call timed out")
+        return None
+    except Exception as exc:  # noqa: BLE001
+        logger.warning("analytics briefing AI call failed: %s", type(exc).__name__)
         return None
 
 

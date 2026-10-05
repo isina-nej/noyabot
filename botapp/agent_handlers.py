@@ -98,6 +98,21 @@ class AgentTriggerFilter(BaseFilter):
         stripped = message.text.lstrip()
         lowered = stripped.casefold()
 
+        # Reply-based request to inspect/analyze the replied message:
+        # Precedence: message analysis always falls through to Noya chat pipeline
+        # (where build_noya_user_payload provides replied text) instead of admin agent.
+        replied = getattr(message, "reply_to_message", None)
+        if replied is not None:
+            from botapp.agent.parser import is_message_analysis_request
+
+            check_text = stripped
+            for p in _NOYA_PREFIXES + _ADMIN_PREFIXES:
+                if lowered.startswith(p):
+                    check_text = stripped[len(p):].strip()
+                    break
+            if is_message_analysis_request(check_text):
+                return False
+
         # 1) Explicit admin trigger — force the agent (deterministic then AI).
         admin_command = _strip_prefix(stripped, lowered, _ADMIN_PREFIXES)
         if admin_command is not None:
@@ -152,14 +167,16 @@ class AgentTriggerFilter(BaseFilter):
                     return False
 
                 from botapp.agent.target_chat import extract_explicit_chat_ref
+                from botapp.agent.parser import parse as deterministic_parse
                 from botapp.noya_clock import is_clock_question
                 from botapp.noya_search import needs_web_search
 
-                if is_clock_question(stripped) or needs_web_search(stripped):
-                    return False
-
                 _, remainder = extract_explicit_chat_ref(stripped)
                 parse_text = remainder or stripped
+
+                if deterministic_parse(parse_text) is None:
+                    if is_clock_question(stripped) or needs_web_search(stripped):
+                        return False
                 identity = await resolve_admin_identity(
                     bot, message.chat.id, message.from_user
                 )

@@ -52,7 +52,7 @@ class BotStartGateHardeningTest(TestCase):
         anonymous_admin.sender_chat = SimpleNamespace(id=anonymous_admin.chat.id)
         external_channel = self.message(2)
         external_channel.sender_chat = SimpleNamespace(id=-100999)
-        external_channel.from_user = SimpleNamespace(id=777000, is_bot=True)
+        external_channel.from_user = SimpleNamespace(id=777000, is_bot=False)
 
         assert _service_or_exempt(anonymous_admin) is True
         assert _service_or_exempt(external_channel) is False

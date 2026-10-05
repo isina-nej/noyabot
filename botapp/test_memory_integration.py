@@ -141,7 +141,7 @@ class MemoryIntegrationTest(TestCase):
             events.append(("provider", question, session_id))
             return "پاسخ موفق"
 
-        answer = async_to_sync(__import__("botapp.memory.integration", fromlist=["run_ai_with_memory"]).run_ai_with_memory)(
+        answer, _meta = async_to_sync(__import__("botapp.memory.integration", fromlist=["run_ai_with_memory"]).run_ai_with_memory)(
             message, "سؤال", provider, "telegram:-100"
         )
         assert answer == "پاسخ موفق"

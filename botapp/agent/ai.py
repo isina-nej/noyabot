@@ -165,8 +165,26 @@ class NoyaAgentProvider:
             async with httpx.AsyncClient(timeout=self.timeout) as client:
                 response = await client.post(url, headers=headers, json=payload)
                 response.raise_for_status()
-                data = response.json()
+                text = (response.text or "").strip()
+                if not text:
+                    logger.warning("Agent AI request returned empty body (status=%s)", response.status_code)
+                    raise AIProviderError("Empty response body from AI provider")
+                try:
+                    data = response.json()
+                except Exception as json_err:
+                    logger.warning(
+                        "Agent AI request returned non-JSON body (status=%s): %s",
+                        response.status_code,
+                        type(json_err).__name__,
+                    )
+                    raise AIProviderError("Invalid JSON from AI provider") from json_err
                 return data["choices"][0]["message"]["content"]
+        except httpx.ReadTimeout as exc:
+            logger.warning("Agent AI request timed out (ReadTimeout) after %.1fs", self.timeout)
+            raise AIProviderError("AI provider read timed out") from exc
+        except httpx.TimeoutException as exc:
+            logger.warning("Agent AI request timed out: %s", type(exc).__name__)
+            raise AIProviderError("AI provider timed out") from exc
         except (httpx.HTTPError, KeyError, IndexError, TypeError, ValueError) as exc:
             logger.warning("Agent AI request failed: %s", type(exc).__name__)
             raise AIProviderError() from exc

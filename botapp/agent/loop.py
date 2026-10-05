@@ -134,14 +134,23 @@ async def run_agent_loop(
             try:
                 resp = await client.post(api_url, json=payload, headers=headers)
                 resp.raise_for_status()
+            except httpx.ReadTimeout as e:
+                logger.warning(f"[NOYA-AGENT] Read timeout from AI provider: {type(e).__name__}")
+                return "پاسخ هوش مصنوعی زمان‌بر شد (تایم‌اوت). لطفاً دوباره تلاش کنید.", metadata
+            except httpx.TimeoutException as e:
+                logger.warning(f"[NOYA-AGENT] Timeout contacting AI provider: {type(e).__name__}")
+                return "خطا در اتصال به هوش مصنوعی (تایم‌اوت).", metadata
             except httpx.HTTPStatusError as e:
-                logger.error(f"[NOYA-AGENT] API error: {e.response.status_code}")
+                logger.warning(f"[NOYA-AGENT] API error status: {e.response.status_code}")
                 return f"خطا در ارتباط با هوش مصنوعی ({e.response.status_code})", metadata
             except httpx.RequestError as e:
-                logger.error(f"[NOYA-AGENT] Request error: {e}")
+                logger.warning(f"[NOYA-AGENT] Request error: {type(e).__name__}")
                 return "خطا در اتصال به هوش مصنوعی.", metadata
 
-        text = resp.text
+        text = (resp.text or "").strip()
+        if not text:
+            logger.warning("[NOYA-AGENT] Empty response body from AI provider (status=%s)", resp.status_code)
+            return "پاسخی از هوش مصنوعی دریافت نشد.", metadata
 
         # ── Parse response: try JSON first, then SSE stream ──
         try:

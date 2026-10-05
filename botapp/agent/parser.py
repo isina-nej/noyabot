@@ -104,6 +104,53 @@ _ENABLE = ("فعال", "روشن", "بذار", "بگذار", "enable", "on")
 _DISABLE = ("غیرفعال", "خاموش", "بردار", "disable", "off")
 
 
+def is_message_analysis_request(text: str) -> bool:
+    """Detect if the user is asking to analyze/inspect a specific message or text.
+
+    E.g. prompt injection check, analyzing a replied text, etc.
+    Must NOT be routed to generic group analytics (analytics.generate_briefing).
+    """
+    t = " ".join((text or "").replace("\u200c", "").casefold().split())
+    has_target = _has_any(
+        t,
+        "این متن",
+        "این پیام",
+        "متن رو",
+        "پیام رو",
+        "متن این",
+        "پیام این",
+        "متن زیر",
+        "پیام زیر",
+        "متن بالا",
+        "پیام بالا",
+        "متن ریپلای",
+        "پیام ریپلای",
+    )
+    has_injection = _has_any(
+        t,
+        "تزریق دستور",
+        "تزریق پرامپت",
+        "prompt injection",
+        "تزریق کد",
+        "تزریق",
+        "injection",
+    )
+    has_inspection = _has_any(
+        t,
+        "تحلیل متن",
+        "تحلیل پیام",
+        "بررسی متن",
+        "بررسی پیام",
+        "آنالیز متن",
+        "آنالیز پیام",
+    )
+    if has_injection or has_inspection:
+        return True
+    if has_target and _has_any(t, "تحلیل", "بررسی", "آنالیز", "چک", "تست", "ارزیابی", "inspect", "analyze"):
+        return True
+    return False
+
+
 def parse(command: str) -> AgentDecision | None:  # noqa: C901 - flat rule table
     raw = (command or "").strip()
     if not raw:
@@ -178,7 +225,6 @@ def parse(command: str) -> AgentDecision | None:  # noqa: C901 - flat rule table
         "تحلیل عمیق",
         "بررسی کامل",
         "بررسی مرحله",
-        "تحقیق کن",
         "تحقیق کامل",
         "با ابزار بررسی",
         "مرحله به مرحله",
@@ -186,6 +232,10 @@ def parse(command: str) -> AgentDecision | None:  # noqa: C901 - flat rule table
         "investigate",
     ) or (
         _has_any(text, "بررسی") and _has_any(text, "کامل", "عمیق", "دقیق", "همه‌جانبه", "جامع")
+    ) or (
+        _has_any(text, "بررسی") and _has_any(text, "گروه", "کانال") and not is_message_analysis_request(text)
+    ) or (
+        _has_any(text, "تحقیق") and _has_any(text, "گروه", "کانال")
     ):
         return _decision(
             "harness.investigate",
@@ -193,6 +243,9 @@ def parse(command: str) -> AgentDecision | None:  # noqa: C901 - flat rule table
             intent="harness_investigate",
             summary="بررسی مرحله‌ای گروه/کانال",
         )
+    if is_message_analysis_request(text):
+        return None
+
     if _has_any(text, "تحلیل", "آنالیز", "briefing", "گزارش تحلیلی", "وضعیت کلی"):
         # «تحلیل … چند پیام» already matched above; pure analysis → briefing.
         return _decision("analytics.generate_briefing", {}, intent="briefing", summary="تحلیل گروه/کانال")

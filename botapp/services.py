@@ -309,14 +309,31 @@ async def _call_noya_api_direct(
         async with httpx.AsyncClient(timeout=NOYA_API_TIMEOUT) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
-            content = response.json()["choices"][0]["message"]["content"]
+            text = (response.text or "").strip()
+            if not text:
+                logger.warning("Direct API returned empty body (status=%s)", response.status_code)
+                return "خطا در ارتباط با نویا (پاسخ خالی).", {}
+            try:
+                data = response.json()
+            except Exception as json_err:
+                logger.warning(
+                    "Direct API non-JSON response (status=%s): %s",
+                    response.status_code,
+                    type(json_err).__name__,
+                )
+                return "خطا در پردازش پاسخ نویا.", {}
+            content = data["choices"][0]["message"]["content"]
             ai_ms = (monotonic() - t_ai) * 1000
             logger.info("[NOYA-TIMING] 🤖 Direct API %.1fms chars=%d", ai_ms, len(content))
             return content, {}
-    except httpx.TimeoutException:
+    except httpx.ReadTimeout:
+        logger.warning("Direct API read timed out (ReadTimeout) after %.1fs", NOYA_API_TIMEOUT)
         return "نویا این لحظه شلوغه و جواب نداد.", {}
-    except Exception:
-        logger.exception("[NOYA-TIMING] ❌ Direct API failed")
+    except httpx.TimeoutException:
+        logger.warning("Direct API timed out")
+        return "نویا این لحظه شلوغه و جواب نداد.", {}
+    except Exception as exc:
+        logger.warning("[NOYA-TIMING] ❌ Direct API failed: %s", type(exc).__name__)
         return "خطا در ارتباط با نویا.", {}
 
 

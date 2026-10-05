@@ -222,6 +222,13 @@ async def handle_admin_command(bot, message, command_text: str, *, ai_provider=N
 
             raise AgentPermissionDenied()
 
+        from .parser import is_message_analysis_request
+
+        if is_message_analysis_request(command_text):
+            raise AgentParseError(
+                "❌ این درخواست مربوط به تحلیل متن است و عملیات مدیریتی اجرا نمی‌کند."
+            )
+
         decision, parser_type = await _decide(ctx, command_text, ai_provider)
         tool = registry.get(decision.tool)
 
