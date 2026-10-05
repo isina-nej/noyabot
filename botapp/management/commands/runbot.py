@@ -1249,7 +1249,6 @@ _IMAGE_EDIT_KEYWORDS = (
     "کراپ", "برش", "فیلتر", "پس‌زمینه", "بکگراند", "سفید", "سیاه", "قرمز",
     "آبی", "سبز", "زرد", "صورتی", "بنفش", "نارنجی", "طلایی", "خاکستری",
     "edit", "change", "remove", "add", "blur", "crop", "rotate", "flip",
-    "کن", "بکن", "بده", "بزن",
 )
 
 
@@ -1257,8 +1256,14 @@ def _is_image_edit_request(text: str, has_reply_image: bool) -> bool:
     """Detect if user is asking to edit/modify the replied image."""
     if not has_reply_image:
         return False
+    from botapp.agent.parser import is_message_analysis_request
+    if is_message_analysis_request(text):
+        return False
     t = (text or "").strip().lower()
     if not t:
+        return False
+    # Analysis, explanation, or reading requests are never edit requests
+    if any(k in t for k in ("تحلیل", "بررسی", "آنالیز", "توضیح", "چک", "بخوان", "بخون", "متن این", "پیام این", "کپشن")):
         return False
     return any(kw in t for kw in _IMAGE_EDIT_KEYWORDS)
 
@@ -1829,49 +1834,53 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             f"note=این پیام از یک ربات دیگر است؛ اگر ریپلای/تگ کرده جواب بده."
             f"\n[/SPEAKER_BOT]\n\n{payload}"
         )
-    img_prompt = extract_image_prompt(ask)
-    if img_prompt and not images:
-        await _handle_noya_image_generation(message, img_prompt)
-        return
-    # Image edit: user replies to an image with edit instructions
-    reply_has_image = bool(images and any(i.get("source") in ("reply", "reply_parent") for i in images))
-    if reply_has_image and _is_image_edit_request(ask, True):
-        # Get the first reply image for editing
-        reply_img = next((i for i in images if i.get("source") in ("reply", "reply_parent")), None)
-        if reply_img:
-            logger.info("[NOYA-TIMING] ✏️ Image edit detected: %r", ask[:60])
-            await _handle_noya_image_edit(message, ask, reply_img["data"], reply_img.get("mime", "image/jpeg"))
-            return
-    # ── Jev media fast path (voice/image/none, fail-open) ──
-    # Strict regexes above already handled exact phrasings; Jev covers the
-    # rest. The whole block is guarded: any failure falls through to the
-    # LLM path unchanged.
-    try:
-        from botapp.agent import jev_media as _jev_media_mod
+    from botapp.agent.parser import is_message_analysis_request
+    is_analysis = is_message_analysis_request(ask)
 
-        _jev_verdict = await _jev_media_mod.jev_classify_media(ask, chat_id=int(message.chat.id))
-        _jev_action = _jev_media_mod.media_action(
-            (_jev_verdict or {}).get("media"), (_jev_verdict or {}).get("confidence")
-        )
-        if _jev_verdict is not None and _jev_action == "voice":
-            _voice_text = extract_voice_text(ask) or _jev_media_mod.strip_media_trigger(ask, "voice")
-            if _voice_text:
-                logger.info("jev_media_fast chat=%s voice conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
-                await _handle_noya_tts(message, _voice_text)
-                return
-        elif _jev_verdict is not None and _jev_action == "image" and not images:
-            _img_prompt = extract_image_prompt(ask) or _jev_media_mod.strip_media_trigger(ask, "image")
-            if _img_prompt:
-                logger.info("jev_media_fast chat=%s image conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
-                await _handle_noya_image_generation(message, _img_prompt)
-                return
-        elif _jev_verdict is not None and _jev_action == "image" and images:
-            _edit_img = next((i for i in images if i.get("source") in ("reply", "reply_parent")), None) or images[0]
-            logger.info("jev_media_fast chat=%s image_edit conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
-            await _handle_noya_image_edit(message, ask, _edit_img["data"], _edit_img.get("mime", "image/jpeg"))
+    if not is_analysis:
+        img_prompt = extract_image_prompt(ask)
+        if img_prompt and not images:
+            await _handle_noya_image_generation(message, img_prompt)
             return
-    except Exception:
-        logger.info("jev_media_fail_open chat=%s", message.chat.id)
+        # Image edit: user replies to an image with edit instructions
+        reply_has_image = bool(images and any(i.get("source") in ("reply", "reply_parent") for i in images))
+        if reply_has_image and _is_image_edit_request(ask, True):
+            # Get the first reply image for editing
+            reply_img = next((i for i in images if i.get("source") in ("reply", "reply_parent")), None)
+            if reply_img:
+                logger.info("[NOYA-TIMING] ✏️ Image edit detected: %r", ask[:60])
+                await _handle_noya_image_edit(message, ask, reply_img["data"], reply_img.get("mime", "image/jpeg"))
+                return
+        # ── Jev media fast path (voice/image/none, fail-open) ──
+        # Strict regexes above already handled exact phrasings; Jev covers the
+        # rest. The whole block is guarded: any failure falls through to the
+        # LLM path unchanged.
+        try:
+            from botapp.agent import jev_media as _jev_media_mod
+
+            _jev_verdict = await _jev_media_mod.jev_classify_media(ask, chat_id=int(message.chat.id))
+            _jev_action = _jev_media_mod.media_action(
+                (_jev_verdict or {}).get("media"), (_jev_verdict or {}).get("confidence")
+            )
+            if _jev_verdict is not None and _jev_action == "voice":
+                _voice_text = extract_voice_text(ask) or _jev_media_mod.strip_media_trigger(ask, "voice")
+                if _voice_text:
+                    logger.info("jev_media_fast chat=%s voice conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
+                    await _handle_noya_tts(message, _voice_text)
+                    return
+            elif _jev_verdict is not None and _jev_action == "image" and not images:
+                _img_prompt = extract_image_prompt(ask) or _jev_media_mod.strip_media_trigger(ask, "image")
+                if _img_prompt:
+                    logger.info("jev_media_fast chat=%s image conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
+                    await _handle_noya_image_generation(message, _img_prompt)
+                    return
+            elif _jev_verdict is not None and _jev_action == "image" and images:
+                _edit_img = next((i for i in images if i.get("source") in ("reply", "reply_parent")), None) or images[0]
+                logger.info("jev_media_fast chat=%s image_edit conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
+                await _handle_noya_image_edit(message, ask, _edit_img["data"], _edit_img.get("mime", "image/jpeg"))
+                return
+        except Exception:
+            logger.info("jev_media_fail_open chat=%s", message.chat.id)
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     answer, agent_metadata = await run_ai_with_memory(
         message,
@@ -1881,6 +1890,10 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         images=images or None,
     )
     t_reply = monotonic()
+    # Message analysis requests MUST always yield textual response; never photo/voice or action
+    if is_analysis:
+        await reply_noya_answer(message, answer)
+        return
     # --- Agent tool results (image/TTS from agent loop) ---
     if agent_metadata.get("generated_image_b64"):
         import base64

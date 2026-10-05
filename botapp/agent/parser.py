@@ -107,24 +107,39 @@ _DISABLE = ("غیرفعال", "خاموش", "بردار", "disable", "off")
 def is_message_analysis_request(text: str) -> bool:
     """Detect if the user is asking to analyze/inspect a specific message or text.
 
-    E.g. prompt injection check, analyzing a replied text, etc.
-    Must NOT be routed to generic group analytics (analytics.generate_briefing).
+    E.g. prompt injection check, analyzing a replied text, photo caption, currency message.
+    Must NOT be routed to generic group analytics (analytics.generate_briefing)
+    and must NOT trigger image editing or media shortcuts.
     """
     t = " ".join((text or "").replace("\u200c", "").casefold().split())
     has_target = _has_any(
         t,
         "این متن",
         "این پیام",
+        "این عکس",
+        "این تصویر",
         "متن رو",
         "پیام رو",
+        "عکس رو",
+        "تصویر رو",
+        "متن را",
+        "پیام را",
+        "عکس را",
+        "تصویر را",
         "متن این",
         "پیام این",
+        "عکس این",
+        "تصویر این",
         "متن زیر",
         "پیام زیر",
         "متن بالا",
         "پیام بالا",
         "متن ریپلای",
         "پیام ریپلای",
+        "کپشن",
+        "کپشن رو",
+        "کپشن این",
+        "محتوای این",
     )
     has_injection = _has_any(
         t,
@@ -134,6 +149,8 @@ def is_message_analysis_request(text: str) -> bool:
         "تزریق کد",
         "تزریق",
         "injection",
+        "پرامپت مخرب",
+        "دستور مخرب",
     )
     has_inspection = _has_any(
         t,
@@ -143,10 +160,14 @@ def is_message_analysis_request(text: str) -> bool:
         "بررسی پیام",
         "آنالیز متن",
         "آنالیز پیام",
+        "تحلیل عکس",
+        "تحلیل تصویر",
+        "بررسی عکس",
+        "بررسی تصویر",
     )
     if has_injection or has_inspection:
         return True
-    if has_target and _has_any(t, "تحلیل", "بررسی", "آنالیز", "چک", "تست", "ارزیابی", "inspect", "analyze"):
+    if has_target and _has_any(t, "تحلیل", "بررسی", "آنالیز", "چک", "تست", "ارزیابی", "inspect", "analyze", "نظر", "امنیت"):
         return True
     return False
 

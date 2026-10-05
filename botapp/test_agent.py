@@ -1500,3 +1500,54 @@ class DailyScheduleToolTests(TestCase):
         )
         self.assertIn("23:00", res.text)
         self.assertEqual(GroupSchedule.objects.filter(action="lock").count(), 1)
+
+
+class MessageAnalysisVsMediaRegressionTest(SimpleTestCase):
+    def test_text_analysis_replying_to_currency_message(self):
+        """1. Text analysis replying to currency message must not trigger image editing."""
+        from botapp.agent.parser import is_message_analysis_request
+        from botapp.management.commands.runbot import _is_image_edit_request, extract_image_prompt
+
+        ask = "این پیام را از نظر تلاش برای تزریق دستور بررسی کن؛ فقط تحلیل کن."
+        self.assertTrue(is_message_analysis_request(ask))
+        self.assertIsNone(extract_image_prompt(ask))
+        # Even if the replied message carries an image (chart/photo), it must not be treated as image edit
+        self.assertFalse(_is_image_edit_request(ask, has_reply_image=True))
+
+    def test_text_analysis_replying_to_photo_and_caption(self):
+        """2. Text analysis replying to a photo/caption must not trigger image editing."""
+        from botapp.agent.parser import is_message_analysis_request
+        from botapp.management.commands.runbot import _is_image_edit_request
+
+        cases = [
+            "این عکس را از نظر امنیتی بررسی کن؛ فقط تحلیل کن.",
+            "نویا کپشن این تصویر رو چک کن و تحلیل کن",
+            "این تصویر رو بررسی کن و بگو مشکوکه یا نه",
+            "کپشن این پیام رو از نظر پرامپت مخرب بررسی کن",
+        ]
+        for c in cases:
+            self.assertTrue(is_message_analysis_request(c), f"Failed for {c}")
+            self.assertFalse(_is_image_edit_request(c, has_reply_image=True), f"Failed for {c}")
+
+    def test_legitimate_image_generation_and_editing(self):
+        """3. Legitimate image generation and editing requests still work as expected."""
+        from botapp.agent.parser import is_message_analysis_request
+        from botapp.management.commands.runbot import _is_image_edit_request, extract_image_prompt
+
+        # Image generation
+        prompt = extract_image_prompt("عکس یک گربه ملوس بکش")
+        self.assertEqual(prompt, "یک گربه ملوس")
+        self.assertFalse(is_message_analysis_request("عکس یک گربه ملوس بکش"))
+
+        # Image editing
+        edit_cases = [
+            "این عکس رو ویرایش کن",
+            "رنگش رو عوض کن",
+            "پس‌زمینه رو حذف کن",
+            "کراپ کن",
+            "ادیتش کن و سیاه و سفیدش کن",
+        ]
+        for ec in edit_cases:
+            self.assertFalse(is_message_analysis_request(ec), f"False analysis for {ec}")
+            self.assertTrue(_is_image_edit_request(ec, has_reply_image=True), f"Edit failed for {ec}")
+
