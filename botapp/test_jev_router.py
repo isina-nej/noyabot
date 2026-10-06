@@ -182,14 +182,17 @@ class JevRouterTests(SimpleTestCase):
 
 
 class JevClassifyIntegrationTests(SimpleTestCase):
+    """JEV-first 4-way integration: model selects the route, deterministic
+    only validates intent (never the primary selector)."""
+
     def setUp(self):
         classify_cache.clear()
         jev_router._cool_until = 0.0
 
-    def test_jev_agent_confident_skips_llm(self):
-        verdict = {"route": "agent", "confidence": 0.95, "thinking": "", "reason": "jev"}
+    def test_jev_admin_confident_skips_llm(self):
+        verdict = {"route": "admin", "confidence": 0.95}
         with patch(
-            "botapp.agent.jev_router.jev_classify_route",
+            "botapp.agent.jev_router.jev_classify_request",
             new=AsyncMock(return_value=verdict),
         ):
             ok = async_to_sync(should_route_to_agent)(
@@ -197,10 +200,21 @@ class JevClassifyIntegrationTests(SimpleTestCase):
             )
         self.assertTrue(ok)
 
-    def test_jev_chat_confident_skips_llm(self):
-        verdict = {"route": "chat", "confidence": 0.9, "thinking": "", "reason": "jev"}
+    def test_jev_harness_confident_skips_llm(self):
+        verdict = {"route": "harness", "confidence": 0.92}
         with patch(
-            "botapp.agent.jev_router.jev_classify_route",
+            "botapp.agent.jev_router.jev_classify_request",
+            new=AsyncMock(return_value=verdict),
+        ):
+            ok = async_to_sync(should_route_to_agent)(
+                "بررسی کامل گروه", chat_id=-42, provider=_Boom()
+            )
+        self.assertTrue(ok)
+
+    def test_jev_chat_confident_skips_llm(self):
+        verdict = {"route": "chat", "confidence": 0.9}
+        with patch(
+            "botapp.agent.jev_router.jev_classify_request",
             new=AsyncMock(return_value=verdict),
         ):
             ok = async_to_sync(should_route_to_agent)(
@@ -208,9 +222,33 @@ class JevClassifyIntegrationTests(SimpleTestCase):
             )
         self.assertFalse(ok)
 
+    def test_jev_media_confident_stays_in_chat(self):
+        verdict = {"route": "media", "confidence": 0.95}
+        with patch(
+            "botapp.agent.jev_router.jev_classify_request",
+            new=AsyncMock(return_value=verdict),
+        ):
+            ok = async_to_sync(should_route_to_agent)(
+                "عکس یک گربه بکش", chat_id=-42, provider=_Boom()
+            )
+        self.assertFalse(ok)
+
+    def test_jev_low_conf_admin_blocked_from_tools(self):
+        # conf < 0.80 on a tool route must not execute: falls through to the
+        # provider second opinion, and a chat verdict there stays in chat.
+        verdict = {"route": "admin", "confidence": 0.5}
+        with patch(
+            "botapp.agent.jev_router.jev_classify_request",
+            new=AsyncMock(return_value=verdict),
+        ):
+            ok = async_to_sync(should_route_to_agent)(
+                "یه کار عجیب مدیریتی بکن", chat_id=-42, provider=_Llm("chat", 0.9)
+            )
+        self.assertFalse(ok)
+
     def test_jev_down_falls_back_to_llm(self):
         with patch(
-            "botapp.agent.jev_router.jev_classify_route",
+            "botapp.agent.jev_router.jev_classify_request",
             new=AsyncMock(return_value=None),
         ):
             ok = async_to_sync(should_route_to_agent)(
@@ -218,10 +256,10 @@ class JevClassifyIntegrationTests(SimpleTestCase):
             )
         self.assertTrue(ok)
 
-    def test_jev_ambiguous_falls_back_to_llm(self):
-        verdict = {"route": "chat", "confidence": 0.5, "thinking": "", "reason": "jev"}
+    def test_jev_unknown_route_falls_back_to_llm(self):
+        verdict = {"route": "teleport", "confidence": 0.99}
         with patch(
-            "botapp.agent.jev_router.jev_classify_route",
+            "botapp.agent.jev_router.jev_classify_request",
             new=AsyncMock(return_value=verdict),
         ):
             ok = async_to_sync(should_route_to_agent)(
@@ -242,3 +280,69 @@ class JevClassifyIntegrationTests(SimpleTestCase):
                 )
         self.assertTrue(ok)
         client_cls.assert_not_called()
+
+
+def _request_response(route="admin", confidence=0.95):
+    return httpx.Response(
+        200,
+        json={
+            "answers": {
+                "request": {
+                    "type": "choice",
+                    "choice": route,
+                    "confidence": confidence,
+                }
+            }
+        },
+        request=httpx.Request("POST", "https://example.test/v1/systemone"),
+    )
+
+
+class JevRequestRouterTests(SimpleTestCase):
+    """4-way JEV verdict (chat/admin/harness/media) with safe fallbacks."""
+
+    def setUp(self):
+        jev_router._cool_until = 0.0
+
+    def _call(self, text, *effects):
+        context, _ = _client(*effects)
+        with patch.dict("os.environ", _ENV, clear=True):
+            with patch(
+                "botapp.agent.jev_router.httpx.AsyncClient",
+                return_value=context,
+            ):
+                return async_to_sync(jev_router.jev_classify_request)(
+                    text, chat_id=-1
+                )
+
+    def test_harness_verdict(self):
+        result = self._call("بررسی کامل گروه", _request_response("harness", 0.92))
+        assert result is not None
+        self.assertEqual(result["route"], "harness")
+        self.assertAlmostEqual(result["confidence"], 0.92)
+
+    def test_media_verdict(self):
+        result = self._call("عکس یک گربه بکش", _request_response("media", 0.9))
+        assert result is not None
+        self.assertEqual(result["route"], "media")
+
+    def test_empty_returns_none(self):
+        result = self._call("", _request_response("admin", 0.95))
+        self.assertIsNone(result)
+
+    def test_timeout_returns_none(self):
+        result = self._call("سلام", RuntimeError("timeout"))
+        self.assertIsNone(result)
+
+    def test_bad_shape_returns_none(self):
+        bad = httpx.Response(
+            200,
+            json={"unexpected": True},
+            request=httpx.Request("POST", "https://example.test/v1/systemone"),
+        )
+        result = self._call("سلام", bad)
+        self.assertIsNone(result)
+
+    def test_unknown_route_returns_none(self):
+        result = self._call("سلام", _request_response("teleport", 0.99))
+        self.assertIsNone(result)

@@ -255,10 +255,10 @@ cp .env.example .env
 
 ### جریان اجرا
 
-`Trigger → Admin Verification → Deterministic Parser → (AI Structured Parser) → Schema Validation → Registry Lookup → App Permission → Bot Capability → Target Resolution → Risk → Confirmation → Existing-Service Execution → Audit → Persian Response`
+`Trigger → Admin Verification → JEV-first 4-way Route (chat/admin/harness/media) → Parser Validation → (AI Structured Parser) → Schema Validation → Registry Lookup → App Permission → Bot Capability → Target Resolution → Risk → Confirmation → Existing-Service Execution → Audit → Persian Response`
 
-- ابتدا یک Parser قطعی و کم‌هزینه فارسی اجرا می‌شود؛ فقط اگر نتیجه نداد و `AGENT_AI_ENABLED=true` باشد، درخواست برای مدل ارسال می‌شود.
-- مدل AI فقط یک `AgentDecision` معتبر و allowlist‌شده تولید می‌کند؛ هرگز مستقیماً عملیات تلگرام یا دیتابیس انجام نمی‌دهد.
+- ابتدا مدل مسیر را انتخاب می‌کند (JEV SystemOne چهارمسیره، سپس JSON ساختاریافته 9Router)؛ Parser قطعی فقط اعتبارسنجی intent و جلوگیری از اجرای ناامن است، نه انتخاب‌کننده اصلی مسیر. اجرای ابزار فقط با confidence ≥ 0.80 مجاز است، وگرنه چت/شفاف‌سازی.
+- مدل AI فقط `RequestClassification` (route/intent/confidence/target_source/reason) و سپس `AgentDecision` معتبر و allowlist‌شده تولید می‌کند؛ هرگز مستقیماً عملیات تلگرام یا دیتابیس انجام نمی‌دهد و هرگز `user_id`/`message_id`/`chat_id` نمی‌سازد.
 - عملیات state‌دار مدیریتی از همان Pipeline موجود (`queue_or_execute` → `ModerationAction`) استفاده می‌کنند.
 - کاربر هدف فقط از Reply تعیین می‌شود؛ مدل اجازه‌ی ساختن `user_id` را ندارد.
 - محتوای Reply/نقل‌قول به‌عنوان `<untrusted_message>` (داده، نه دستور) به مدل داده می‌شود.

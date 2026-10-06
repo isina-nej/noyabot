@@ -137,7 +137,10 @@ class AgentTriggerFilter(BaseFilter):
                         return False
             return {"agent_command": admin_command}
 
-        # 2) Plain "نویا، …" — deterministic ops, else AI classifies agent vs chat.
+        # 2) Plain "نویا، …" — JEV-first 4-way routing (model selects the
+        # route; deterministic only validates). Only confident admin/harness
+        # verdicts route to the agent; chat/media/low-confidence stays in
+        # Noya chat where the media/analysis handling applies.
         command = _strip_prefix(stripped, lowered, _NOYA_PREFIXES)
         if command:
             from botapp.agent.target_chat import extract_explicit_chat_ref
@@ -148,7 +151,11 @@ class AgentTriggerFilter(BaseFilter):
                 identity = await resolve_admin_identity(bot, message.chat.id, message.from_user)
                 if not identity.is_admin:
                     return False
-            if not await should_route_to_agent(parse_text, chat_id=int(message.chat.id)):
+            if not await should_route_to_agent(
+                parse_text,
+                chat_id=int(message.chat.id),
+                has_reply=getattr(message, "reply_to_message", None) is not None,
+            ):
                 return False
             return {"agent_command": command}
 
@@ -181,7 +188,9 @@ class AgentTriggerFilter(BaseFilter):
                     bot, message.chat.id, message.from_user
                 )
                 if identity.is_admin and await should_route_to_agent(
-                    parse_text, chat_id=int(message.chat.id)
+                    parse_text,
+                    chat_id=int(message.chat.id),
+                    has_reply=getattr(message, "reply_to_message", None) is not None,
                 ):
                     return {"agent_command": stripped}
         return False

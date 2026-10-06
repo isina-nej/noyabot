@@ -151,13 +151,31 @@ class HarnessStep(BaseModel):
 
 
 class RouteClassification(BaseModel):
-    """AI router: admin-agent vs ordinary Noya chat."""
+    """AI router: admin-agent vs ordinary Noya chat (legacy binary verdict)."""
 
     model_config = ConfigDict(extra="ignore")
 
     route: Literal["agent", "chat"] = "chat"
     confidence: float = Field(default=0.0, ge=0.0, le=1.0)
     thinking: str = Field(default="", max_length=400)
+    reason: str = Field(default="", max_length=200)
+
+
+class RequestClassification(BaseModel):
+    """JEV-first structured request router verdict (4-way).
+
+    Data only: the model may only ever emit this shape. It carries no tool
+    name, no parameters, and no target ids — ``target_source`` is a
+    structural hint (reply/explicit/none) that the orchestrator re-derives
+    from the live message; it never authorizes anything by itself.
+    """
+
+    model_config = ConfigDict(extra="forbid")
+
+    route: Literal["chat", "admin", "harness", "media"] = "chat"
+    intent: str = Field(default="chat", min_length=1, max_length=64)
+    confidence: float = Field(default=0.0, ge=0.0, le=1.0)
+    target_source: Literal["reply", "explicit", "none"] = "none"
     reason: str = Field(default="", max_length=200)
 
 

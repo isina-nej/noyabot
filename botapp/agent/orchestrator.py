@@ -110,38 +110,31 @@ async def _build_context(bot, message, command_text: str) -> AgentContext:
 
 
 async def _decide(ctx: AgentContext, command_text: str, ai_provider) -> tuple[AgentDecision, str]:
-    decision = deterministic_parse(command_text)
-    if decision is not None:
-        return decision, "deterministic"
+    det = deterministic_parse(command_text)
 
     if not _setting("AGENT_AI_ENABLED", True) or ai_provider is None:
+        # AI off: deterministic last-resort validation only (offline fallback).
+        if det is not None:
+            return det, "deterministic"
         raise AgentParseError()
 
     min_conf = float(_setting("AGENT_MIN_CONFIDENCE", 0.80))
     decision = await ai_provider.parse_admin_command(
         command_text, ctx, registry.ai_catalog()
     )
+    # Deterministic validation of the AI verdict: if the AI decision names an
+    # unknown tool or falls below confidence, the deterministic hint decides
+    # between "reject" and the harness fallback — the model never executes.
+    if det is not None and decision.tool == det.tool:
+        return det, "deterministic-validated"
     if not registry.has(decision.tool):
         raise AgentParseError(
             "❌ از دستور مطمئن نیستم. لطفاً واضح‌تر و مشخص‌تر بنویسید."
         )
     if decision.confidence < min_conf:
-        if (
-            _setting("AGENT_HARNESS_ENABLED", True)
-            and decision.confidence >= 0.5
-            and registry.has("harness.investigate")
-        ):
-            return (
-                AgentDecision(
-                    intent="investigate",
-                    tool="harness.investigate",
-                    confidence=decision.confidence,
-                    risk_level="low",
-                    requires_confirmation=False,
-                    human_summary="بررسی مرحله‌ای",
-                ),
-                "ai-harness",
-            )
+        # Below 0.80 no tool may execute — not even the read-only harness.
+        # The routing layer already directs confident harness verdicts to
+        # harness.investigate; here low confidence means clarification.
         raise AgentParseError(
             "❌ از دستور مطمئن نیستم. لطفاً واضح‌تر و مشخص‌تر بنویسید."
         )

@@ -166,3 +166,108 @@ async def jev_classify_route(text: str, *, chat_id: int) -> dict | None:
             return verdict
     _mark_all_failed()
     return None
+
+
+# --- 4-way request classification (JEV-first routing) -------------------------
+
+# Voice/audio answers are NOT a route here: they stay on the Noya TTS path and
+# classify as chat. "media" means image generate/edit only.
+_REQUEST_CRITERIA = {
+    "chat": (
+        "ordinary question, joke, greeting, weather, opinion, voice/audio "
+        "answer request, reply-text analysis, or anything needing no Telegram "
+        "admin tool, no multi-step investigation, and no generated/edited image"
+    ),
+    "admin": (
+        "single-step admin operation: ban/mute/unmute/warn/lock/unlock/delete/"
+        "pin/group stats/member analytics/admin settings/schedules, or posting "
+        "a channel message"
+    ),
+    "harness": (
+        "multi-step investigation or deep research: complete review, deep "
+        "analysis, step-by-step examination (e.g. complete check, deep group "
+        "analysis, staged investigation, investigate)"
+    ),
+    "media": (
+        "user asks to draw, generate, or edit a picture "
+        "(e.g. draw a photo, create a painting, make an image, edit this photo)"
+    ),
+}
+
+_REQUEST_INSTRUCTIONS = (
+    "Classify this Telegram message to Noya into exactly one request route: "
+    "a single-step admin command (admin), a multi-step investigation "
+    "(harness), an image generate/edit request (media), or ordinary chat "
+    "(chat). When unsure, choose chat."
+)
+
+
+async def _ask_request(
+    model: str, url: str, headers: dict, text: str, timeout: float
+) -> dict | None:
+    payload = {
+        "model": model,
+        "state": (text or "")[:4000],
+        "questions": {
+            "request": {
+                "type": "choice",
+                "instructions": _REQUEST_INSTRUCTIONS,
+                "criteria": _REQUEST_CRITERIA,
+            }
+        },
+    }
+    try:
+        async with httpx.AsyncClient(timeout=timeout) as client:
+            resp = await client.post(url, headers=headers, json=payload)
+            resp.raise_for_status()
+            answer = resp.json()["answers"]["request"]
+    except Exception as exc:
+        logger.warning("jev_request model=%s failed: %s", model, type(exc).__name__)
+        return None
+    try:
+        route = str(answer.get("choice") or answer.get("request") or "").strip().lower()
+        conf = float(answer.get("confidence") or 0.0)
+    except (TypeError, ValueError, AttributeError):
+        logger.warning("jev_request model=%s bad shape", model)
+        return None
+    if route not in {"chat", "admin", "harness", "media"}:
+        logger.warning("jev_request model=%s unknown route=%r", model, route)
+        return None
+    return {"route": route, "confidence": conf, "thinking": "", "reason": "jev"}
+
+
+async def jev_classify_request(text: str, *, chat_id: int) -> dict | None:
+    """4-way SystemOne verdict (chat/admin/harness/media).
+
+    Fail-open like :func:`jev_classify_route`: None on any problem —
+    empty input, timeout, bad shape, unknown route — and the caller falls
+    through to the 9Router structured verdict, then deterministic
+    last-resort validation, then Noya chat. Empty/timeout/invalid output
+    never raises and never executes anything.
+    """
+    if not jev_enabled():
+        return None
+    if _cooling_down():
+        return None
+    stripped = (text or "").strip()
+    if not stripped:
+        return None
+    headers = {
+        "Authorization": f"Bearer {os.getenv('NOYA_API_KEY', '').strip()}",
+        "Content-Type": "application/json",
+    }
+    url = _systemone_url()
+    timeout = _timeout()
+    for model in _models():
+        verdict = await _ask_request(model, url, headers, stripped, timeout)
+        if verdict is not None:
+            logger.info(
+                "jev_request chat=%s route=%s conf=%.2f model=%s",
+                chat_id,
+                verdict["route"],
+                verdict["confidence"],
+                model,
+            )
+            return verdict
+    _mark_all_failed()
+    return None
