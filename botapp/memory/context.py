@@ -19,14 +19,16 @@ def build_memory_context(user_id, conversation, query, max_tokens=600, limit=20)
     selected = []
     total = 0
     for item in items:
-        line = f"- {item.content}"
+        # Preserve the memory category so relationship notes can tune warmth
+        # and trust without being mistaken for ordinary user preferences.
+        line = f"- [{item.category}] {item.content}"
         cost = _token_count(line)
         if total + cost > max(max_tokens, 0):
             continue
         selected.append(item)
         total += cost
     return MemoryContext(
-        text="\n".join(f"- {item.content}" for item in selected),
+        text="\n".join(f"- [{item.category}] {item.content}" for item in selected),
         token_count=total,
         items=tuple(selected),
     )

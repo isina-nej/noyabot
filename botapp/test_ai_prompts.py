@@ -49,6 +49,14 @@ class NoyaSystemPromptTest(TestCase):
         self.assertIn("کنایه را لفظ‌به‌لفظ تفسیر نکن", prompt)
         self.assertIn("مثل یک هم‌صحبت جواب بده", prompt)
 
+    def test_prompt_defines_emotional_noya_persona(self):
+        prompt = get_noya_system_prompt()
+        self.assertIn("اسم تو «نویا» است", prompt)
+        self.assertIn("احساسات گفتگویی‌ات", prompt)
+        self.assertIn("دلخور", prompt)
+        self.assertIn("عذرخواهی و جبران واقعی", prompt)
+        self.assertIn("category=relationship", prompt)
+
     @patch.dict(
         os.environ,
         {

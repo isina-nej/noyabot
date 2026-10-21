@@ -35,6 +35,12 @@ _SKIP_PREFIXES = (
     "rewrite", "translate", "summarize", "خلاصه کن",
 )
 
+_RELATIONSHIP_MARKERS = (
+    "دلخور", "ناراحتم", "خوشحالم", "بی‌احترامی", "بدرفتاری", "خوبی کرد",
+    "کمک کرد", "اعتماد", "کینه", "بخشید", "بخشش", "عذرخواهی", "جبران",
+    "رابطه", "رفتارش", "مهربان", "دوست دارم",
+)
+
 
 def normalize_content(text: str) -> str:
     return " ".join(text.casefold().strip().split())
@@ -72,7 +78,11 @@ def extract_candidates(
         value = _TRAILING_MENTION.sub("", value).strip(" .،")
         if len(value) < 2:
             return []
-        category = "preference" if kind in {"explicit", "preference"} else "identity"
+        normalized_value = normalize_content(value)
+        if any(marker in normalized_value for marker in _RELATIONSHIP_MARKERS):
+            category = "relationship"
+        else:
+            category = "preference" if kind in {"explicit", "preference"} else "identity"
         explicit_global = kind == "explicit"
         return [MemoryCandidate(
             content=value,

@@ -42,6 +42,16 @@ class MemoryCoreTest(TestCase):
         assert candidates[0].is_explicit is True
         assert extract_candidates("امروز هوا چطور است؟") == []
 
+    def test_explicit_relationship_note_is_classified_separately(self):
+        candidates = extract_candidates("یادت باشه علی با من مهربان بود و کمکم کرد")
+        assert len(candidates) == 1
+        assert candidates[0].category == "relationship"
+
+    def test_memory_context_keeps_relationship_category(self):
+        ingest_message(42, self.group, 77, "یادت باشه علی با من مهربان بود و کمکم کرد", timezone.now())
+        context = build_memory_context(42, self.group, "علی مهربان", max_tokens=20)
+        assert "[relationship]" in context.text
+
     def test_noya_trigger_and_mention_still_extract_explicit_memory(self):
         for text in (
             "نویا یادت باشه که من خیلی رنگ آبی رو دوست دارم",
