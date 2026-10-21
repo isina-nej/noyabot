@@ -47,6 +47,8 @@ class NoyaSystemPromptTest(TestCase):
         self.assertIn("skipped", prompt)
         self.assertIn("add when", prompt)
         self.assertIn("کنایه را لفظ‌به‌لفظ تفسیر نکن", prompt)
+        self.assertIn("یک جملهٔ طبیعی و کامل", prompt)
+        self.assertIn("سلام. آشتی. بخند", prompt)
         self.assertIn("مثل یک هم‌صحبت جواب بده", prompt)
 
     def test_prompt_defines_emotional_noya_persona(self):

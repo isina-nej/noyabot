@@ -7,7 +7,8 @@ import re
 PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
 
 _INTERNAL_NOTE_RE = re.compile(
-    r"^\s*(?:→|->)\s*skipped\s*:\s*.+\badd\s+when\s*:\s*.+$",
+    # Internal notes have appeared with and without a colon after ``add when``.
+    r"^\s*(?:→|->)\s*skipped\s*:\s*.+\badd\s+when\s*:?\s*.+$",
     re.IGNORECASE,
 )
 
