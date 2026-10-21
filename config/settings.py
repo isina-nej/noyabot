@@ -116,6 +116,14 @@ MEMORY_LATENCY_LOGGING_ENABLED = os.getenv("MEMORY_LATENCY_LOGGING_ENABLED", "fa
 
 NOYA_SYSTEM_PROMPT_ENABLED = os.getenv("NOYA_SYSTEM_PROMPT_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 NOYA_SEARCH_ENABLED = os.getenv("NOYA_SEARCH_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+# Emotional relationship bands/decay; values are bounded by botapp.emotions.
+NOYA_HURT_MILD_MAX = float(os.getenv("NOYA_HURT_MILD_MAX", "14"))
+NOYA_HURT_SULKY_MAX = float(os.getenv("NOYA_HURT_SULKY_MAX", "34"))
+NOYA_HURT_NOTICEABLE_MAX = float(os.getenv("NOYA_HURT_NOTICEABLE_MAX", "59"))
+NOYA_HURT_SERIOUS_MAX = float(os.getenv("NOYA_HURT_SERIOUS_MAX", "79"))
+NOYA_HURT_MINOR_DECAY_PER_DAY = float(os.getenv("NOYA_HURT_MINOR_DECAY_PER_DAY", "4"))
+NOYA_HURT_SERIOUS_DECAY_PER_DAY = float(os.getenv("NOYA_HURT_SERIOUS_DECAY_PER_DAY", "1"))
+NOYA_RELATIONSHIP_EVENT_RETENTION_DAYS = int(os.getenv("NOYA_RELATIONSHIP_EVENT_RETENTION_DAYS", "90"))
 # Noya creator identity (defaults resolved inside prompts.py).
 NOYA_CREATOR_IDS = os.getenv("NOYA_CREATOR_IDS", "").strip()
 NOYA_CREATOR_NAME = os.getenv("NOYA_CREATOR_NAME", "Sina").strip() or "Sina"

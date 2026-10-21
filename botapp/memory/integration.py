@@ -1,6 +1,8 @@
 import logging
 import re
 import time
+import hashlib
+import json
 from collections.abc import Awaitable, Callable
 
 from asgiref.sync import sync_to_async
@@ -204,6 +206,48 @@ def _speaker_from_message(message) -> tuple[int | None, str]:
     return speaker_user_id, str(speaker_name)[:80]
 
 
+async def _relationship_context_for_message(message) -> dict:
+    """Apply a conservative current-speaker event and return bounded state."""
+    user = getattr(message, "from_user", None)
+    chat = getattr(message, "chat", None)
+    if not user or getattr(user, "is_bot", False) or not chat:
+        return {}
+    raw_text = (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
+    if not raw_text:
+        return {}
+    try:
+        from botapp.memory.relationship import (
+            apply_relationship_event,
+            get_relationship_state,
+            relationship_context,
+        )
+        from botapp.memory.relationship_events import classify_social_event
+
+        conversation = await get_or_create_memory_conversation(message)
+        event = classify_social_event(raw_text)
+        if event is not None:
+            normalized = " ".join(raw_text.casefold().split())
+            if event.kind in {"sincere_apology", "acknowledgement_of_harm", "behavioral_improvement"}:
+                digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
+                event_id = f"repair:{conversation.id}:{event.kind}:{digest}"
+            else:
+                event_id = f"telegram:{chat.id}:{getattr(message, 'message_id', 0)}:social"
+            state = await sync_to_async(apply_relationship_event, thread_sensitive=True)(
+                int(user.id), conversation, event, event_id=event_id,
+            )
+        else:
+            state = await sync_to_async(get_relationship_state, thread_sensitive=True)(
+                int(user.id), conversation,
+            )
+        return relationship_context(state)
+    except Exception as exc:
+        logger.warning(
+            "Relationship state unavailable user=%s chat=%s error=%s",
+            getattr(user, "id", None), getattr(chat, "id", None), type(exc).__name__,
+        )
+        return {}
+
+
 async def run_ai_with_memory(
     message,
     question: str,
@@ -220,6 +264,13 @@ async def run_ai_with_memory(
 
     t1 = time.perf_counter()
     enriched = append_memory_context(question, context.text)
+    relationship = await _relationship_context_for_message(message)
+    if relationship:
+        enriched = (
+            f"{enriched}\n\n[RELATIONSHIP_CONTEXT]\n"
+            f"{json.dumps(relationship, ensure_ascii=False, separators=(',', ':'))}\n"
+            "[/RELATIONSHIP_CONTEXT]"
+        )
     speaker_user_id, speaker_name = _speaker_from_message(message)
     try:
         answer = await provider(

@@ -1,6 +1,6 @@
 import secrets
 
-from django.core.validators import MinValueValidator
+from django.core.validators import MaxValueValidator, MinValueValidator
 from django.db import models
 from django.utils import timezone
 
@@ -552,6 +552,84 @@ class MemoryConversationMember(models.Model):
         indexes = [
             models.Index(fields=["conversation", "last_activity_at"]),
             models.Index(fields=["user", "last_activity_at"]),
+        ]
+
+
+class NoyaRelationshipState(models.Model):
+    """Per-user, per-conversation social state for Noya's persona."""
+
+    user = models.ForeignKey(
+        TelegramUser,
+        on_delete=models.CASCADE,
+        related_name="noya_relationship_states",
+    )
+    conversation = models.ForeignKey(
+        MemoryConversation,
+        on_delete=models.CASCADE,
+        related_name="noya_relationship_states",
+    )
+    hurt_score = models.PositiveSmallIntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
+    repair_progress = models.PositiveSmallIntegerField(
+        default=0, validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
+    warmth = models.PositiveSmallIntegerField(
+        default=55, validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
+    playfulness = models.PositiveSmallIntegerField(
+        default=55, validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
+    trust_context = models.PositiveSmallIntegerField(
+        default=50, validators=[MinValueValidator(0), MaxValueValidator(100)]
+    )
+    current_social_mood = models.CharField(max_length=32, default="neutral")
+    active_conflict_id = models.CharField(max_length=128, blank=True, default="")
+    processed_event_ids = models.JSONField(default=list, blank=True)
+    last_interaction_at = models.DateTimeField(null=True, blank=True)
+    last_negative_event_at = models.DateTimeField(null=True, blank=True)
+    last_reconciliation_at = models.DateTimeField(null=True, blank=True)
+    created_at = models.DateTimeField(auto_now_add=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["user", "conversation"],
+                name="unique_noya_relationship_user_conversation",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["user", "updated_at"]),
+            models.Index(fields=["conversation", "updated_at"]),
+        ]
+
+
+class NoyaRelationshipEvent(models.Model):
+    """Deduplicated social events feeding a relationship state."""
+
+    state = models.ForeignKey(
+        NoyaRelationshipState,
+        on_delete=models.CASCADE,
+        related_name="events",
+    )
+    event_id = models.CharField(max_length=160)
+    kind = models.CharField(max_length=64)
+    severity = models.FloatField(default=0)
+    confidence = models.FloatField(default=1)
+    created_at = models.DateTimeField(auto_now_add=True)
+    metadata = models.JSONField(default=dict, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["state", "event_id"],
+                name="unique_noya_relationship_event",
+            )
+        ]
+        indexes = [
+            models.Index(fields=["state", "created_at"]),
+            models.Index(fields=["created_at"]),
         ]
 
 class MemoryItem(models.Model):
