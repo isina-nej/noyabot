@@ -38,21 +38,56 @@ def _strip_html(html: str) -> str:
 # ── Tool handlers ──
 
 async def _web_search(query: str = "") -> str:
+    """Search the live web and render results with their SOURCE dates.
+
+    Every line states the source publication date, or ``date=unknown`` when the
+    source published none. A stale result set (explicitly asked for the latest,
+    but nothing is recent) is flagged with a ``recency_warning`` line rather
+    than silently presented as current. No results means an honest failure
+    string — never invented content.
+    """
+    from urllib.parse import urlparse
+
     from botapp.web import default_web_service
+    from botapp.web.dates import format_source_date
+    from botapp.web.policy import freshness_intent
+    from botapp.web.ranking import recency_summary
+
     clean_q = (query or "").strip()
     if not clean_q:
         return "لطفاً عبارت جستجو را مشخص کنید."
-    results = await default_web_service.search(clean_q, limit=5)
+
+    freshness = freshness_intent(clean_q)
+    results = await default_web_service.search(clean_q, limit=5, freshness=freshness)
     if not results:
         return "نتیجه‌ای در اینترنت یافت نشد."
-    lines = []
-    for r in results:
-        lines.append(f"• {r.title} (منبع: {r.url})\n  خلاصه: {r.snippet}")
-    return "\n\n".join(lines)
+
+    lines: list[str] = []
+    for r in results[:5]:
+        title = " ".join((r.title or "").split()) or "(بدون عنوان)"
+        try:
+            host = urlparse(r.url or "").netloc.lower()
+        except Exception:
+            host = ""
+        if host.startswith("www."):
+            host = host[4:]
+        published = format_source_date(getattr(r, "published_at", "")) or "unknown"
+        lines.append(f"• {title} | date={published} | source={host or r.source or 'unknown'}")
+        snippet = " ".join((r.snippet or "").split())
+        if snippet:
+            lines.append(f"  {snippet[:240]}")
+        if r.url:
+            lines.append(f"  {r.url}")
+
+    summary = recency_summary(results, freshness)
+    if freshness in ("latest", "recent") and summary.get("stale") and summary.get("oldest_days") is not None:
+        lines.append(f"recency_warning={summary['oldest_days']}d")
+    return "\n".join(lines)
 
 
 async def _fetch_url(url: str = "", query: str = "") -> str:
     from botapp.web import default_web_service
+    from botapp.web.dates import format_source_date
     from botapp.web.evidence import EvidenceBuilder
 
     target = (url or "").strip()
@@ -60,7 +95,16 @@ async def _fetch_url(url: str = "", query: str = "") -> str:
         return "لطفاً آدرس لینک را وارد کنید."
     try:
         doc = await default_web_service.fetch_page(target)
-        header = f"عنوان صفحه: {doc.title}\nآدرس: {doc.final_url}\n"
+        # "تاریخ انتشار" here is the PAGE's own publication date. It is
+        # explicitly not the date of any event mentioned on the page, and it is
+        # "نامشخص" when the page declares nothing.
+        published = format_source_date(getattr(doc, "published_at", "")) or "نامشخص"
+        header = (
+            f"عنوان صفحه: {doc.title}\n"
+            f"آدرس: {doc.final_url}\n"
+            f"تاریخ انتشار: {published}"
+            f" (تاریخ انتشار خودِ صفحه است، نه تاریخ وقوع رویداد)\n"
+        )
         if len(doc.text) <= 8000:
             body = doc.text
         else:

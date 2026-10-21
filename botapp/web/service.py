@@ -4,6 +4,7 @@ from __future__ import annotations
 import asyncio
 import logging
 import os
+from datetime import datetime
 from time import monotonic
 from typing import Any
 
@@ -36,8 +37,22 @@ class WebService:
     def is_enabled() -> bool:
         return os.getenv("NOYA_SEARCH_ENABLED", "true").strip().lower() in {"1", "true", "yes", "on"}
 
-    async def search(self, query: str, limit: int = 8, *, trace: SearchTrace | None = None) -> list[SearchResult]:
-        """Perform web search with ranking and deduplication."""
+    async def search(
+        self,
+        query: str,
+        limit: int = 8,
+        *,
+        freshness: str = "general",
+        now: datetime | None = None,
+        trace: SearchTrace | None = None,
+    ) -> list[SearchResult]:
+        """Perform web search with ranking and deduplication.
+
+        ``freshness`` ("latest" / "recent" / "general") and ``now`` are passed
+        straight through to the ranker so an explicit "what is the latest"
+        question is answered from the newest verified sources. ``general``
+        keeps the historical relevance-only ordering.
+        """
         clean_q = extract_clean_search_query(query)
         if not clean_q:
             return []
@@ -49,14 +64,19 @@ class WebService:
 
         try:
             raw_results = await self.provider.search(clean_q, limit=limit)
-            ranked = SearchResultRanker.rank(raw_results, clean_q)
+            ranked = SearchResultRanker.rank(
+                raw_results, clean_q, freshness=freshness, now=now,
+            )
             elapsed_ms = (monotonic() - t0) * 1000
             if trace:
                 trace.result_count = len(ranked)
                 trace.selected_results = [r.url for r in ranked[:3]]
                 trace.latency_ms += elapsed_ms
 
-            logger.info("web_search_finished query=%s count=%d latency=%.1fms", clean_q[:40], len(ranked), elapsed_ms)
+            logger.info(
+                "web_search_finished query=%s count=%d freshness=%s latency=%.1fms",
+                clean_q[:40], len(ranked), freshness, elapsed_ms,
+            )
             return ranked
         except Exception as exc:
             logger.warning("web_search_failed query=%s error=%s", clean_q[:40], exc)

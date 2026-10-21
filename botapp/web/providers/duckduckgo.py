@@ -5,17 +5,74 @@ import asyncio
 import logging
 import random
 import re
+from datetime import datetime, timezone
 from html import unescape
 from html.parser import HTMLParser
 from urllib.parse import parse_qs, unquote, urlparse
 
 import httpx
 
+from .. import dates
 from ..errors import SearchProviderError
 from ..models import SearchResult
 from .base import SearchProvider
 
 logger = logging.getLogger("noya.web.duckduckgo")
+
+# Keys a provider response may use for a publication timestamp. DuckDuckGo's
+# HTML endpoint exposes none of these today, but the instant-answer API and
+# future providers might; when they do we trust the provider over the snippet.
+_PROVIDER_DATE_FIELDS = (
+    "published_at",
+    "publishedAt",
+    "published",
+    "publication_date",
+    "date",
+    "Date",
+    "pubdate",
+    "pubDate",
+    "published_time",
+    "first_seen",
+    "timestamp",
+)
+
+
+def extract_published_at(
+    snippet: str = "",
+    record: dict | None = None,
+    *,
+    now: datetime | None = None,
+) -> str:
+    """Derive a SOURCE PUBLICATION date (``YYYY-MM-DD``) for one result.
+
+    Two independent sources are tried, in order:
+
+    1. an explicit date field supplied by the provider payload;
+    2. a date statement inside the result snippet ("2 days ago", "Mar 11, 2025",
+       "۱۱ مارس ۲۰۲۵") resolved against ``now``.
+
+    When neither yields something parseable the answer is ``""`` — an empty
+    string means "the source published no date we can verify". The provider
+    never invents one.
+    """
+    reference = now if now is not None else datetime.now(timezone.utc)
+
+    if isinstance(record, dict):
+        for key in _PROVIDER_DATE_FIELDS:
+            value = record.get(key)
+            if not isinstance(value, str) or not value.strip():
+                continue
+            parsed = dates.parse_iso_date(value) or dates.parse_published_date(value, now=reference)
+            formatted = dates.format_source_date(parsed) if parsed is not None else ""
+            if formatted:
+                return formatted
+
+    if snippet:
+        parsed = dates.parse_published_date(snippet, now=reference)
+        if parsed is not None:
+            return dates.format_source_date(parsed)
+
+    return ""
 
 
 class _DDGLiteParser(HTMLParser):
@@ -156,6 +213,7 @@ class DuckDuckGoProvider(SearchProvider):
         parser = _DDGLiteParser()
         parser.feed(resp.text)
 
+        now = datetime.now(timezone.utc)
         results: list[SearchResult] = []
         for i, item in enumerate(parser.results[:limit]):
             results.append(
@@ -165,6 +223,7 @@ class DuckDuckGoProvider(SearchProvider):
                     snippet=item["snippet"],
                     source="duckduckgo",
                     rank=i + 1,
+                    published_at=extract_published_at(item.get("snippet", ""), item, now=now),
                 )
             )
         return results
@@ -178,6 +237,7 @@ class DuckDuckGoProvider(SearchProvider):
             return []
 
         data = resp.json()
+        now = datetime.now(timezone.utc)
         results: list[SearchResult] = []
         rank = 1
 
@@ -192,6 +252,7 @@ class DuckDuckGoProvider(SearchProvider):
                     snippet=abstract or heading,
                     source="duckduckgo-instant",
                     rank=rank,
+                    published_at=extract_published_at(abstract or "", data, now=now),
                 )
             )
             rank += 1
@@ -207,6 +268,7 @@ class DuckDuckGoProvider(SearchProvider):
                         snippet=topic.get("Text", ""),
                         source="duckduckgo-related",
                         rank=rank,
+                        published_at=extract_published_at(topic.get("Text", ""), topic, now=now),
                     )
                 )
                 rank += 1
@@ -232,15 +294,19 @@ class DuckDuckGoProvider(SearchProvider):
         descriptions = data[2]
         urls = data[3]
 
+        now = datetime.now(timezone.utc)
         results: list[SearchResult] = []
         for i in range(min(len(titles), len(urls), limit)):
+            snippet = descriptions[i] if i < len(descriptions) and descriptions[i] else titles[i]
             results.append(
                 SearchResult(
                     title=titles[i],
                     url=urls[i],
-                    snippet=descriptions[i] if i < len(descriptions) and descriptions[i] else titles[i],
+                    snippet=snippet,
                     source="wikipedia",
                     rank=i + 1,
+                    # Wikipedia opensearch carries no timestamp; leave it "".
+                    published_at=extract_published_at(snippet, now=now),
                 )
             )
         return results

@@ -264,13 +264,16 @@ async def call_noya_api(
             speaker_user_id=speaker_user_id,
             speaker_name=speaker_name,
         )
+        # Outbound gate: provider planning annotations must never be delivered.
+        from botapp.agent.responses import sanitize_outgoing_text
+        reply = sanitize_outgoing_text(reply or "")
         agent_ms = (monotonic() - t_agent) * 1000
         total_ms = (monotonic() - t0) * 1000
         logger.info(
             "[NOYA-TIMING] 🤖 Agent loop done in %.1fms (total=%.1fms, tools=%s)",
             agent_ms, total_ms, metadata.get("tools_used", []),
         )
-        return reply, metadata
+        return reply or "پاسخی از هوش مصنوعی دریافت نشد.", metadata
 
     # ── Fallback: direct API call (old path) ──
     return await _call_noya_api_direct(question, session_id, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images)
@@ -327,8 +330,8 @@ async def _call_noya_api_direct(
             content = data["choices"][0]["message"]["content"]
             ai_ms = (monotonic() - t_ai) * 1000
             logger.info("[NOYA-TIMING] 🤖 Direct API %.1fms chars=%d", ai_ms, len(content))
-            from botapp.agent.responses import clean_model_response
-            return clean_model_response(content), {}
+            from botapp.agent.responses import sanitize_outgoing_text
+            return sanitize_outgoing_text(content) or "خطا در ارتباط با نویا (پاسخ خالی).", {}
     except httpx.ReadTimeout:
         logger.warning("Direct API read timed out (ReadTimeout) after %.1fs", NOYA_API_TIMEOUT)
         return "نویا این لحظه شلوغه و جواب نداد.", {}
@@ -570,8 +573,8 @@ async def call_ai_api(
 
     content = data.get("content") if isinstance(data, dict) else None
     if isinstance(content, str) and content.strip():
-        from botapp.agent.responses import clean_model_response
-        return clean_model_response(content) or "پاسخی دریافت نشد."
+        from botapp.agent.responses import sanitize_outgoing_text
+        return sanitize_outgoing_text(content) or "پاسخی دریافت نشد."
     return "پاسخی دریافت نشد."
 
 

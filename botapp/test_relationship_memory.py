@@ -12,7 +12,21 @@ from botapp.memory.relationship import (
     prune_relationship_events,
     relationship_context,
 )
-from botapp.models import MemoryConversation, NoyaRelationshipEvent, TelegramUser
+from botapp.models import MemoryConversation, NoyaRelationshipEvent, NoyaRelationshipState, TelegramUser
+
+CONTEXT_KEYS = {
+    "authoritative",
+    "relationship_status",
+    "conflict_active",
+    "conflict_is_reconciled",
+    "may_request_apology",
+    "may_reference_past_conflict_playfully",
+    "warmth_level",
+    "playfulness_level",
+    "trust_level",
+    "tone_directive",
+    "do_not_claim",
+}
 
 
 class RelationshipPersistenceTests(TestCase):
@@ -46,14 +60,111 @@ class RelationshipPersistenceTests(TestCase):
         self.assertEqual(get_relationship_state(self.user.telegram_user_id, self.chat).hurt_score, 70)
         self.assertEqual(NoyaRelationshipEvent.objects.count(), 1)
 
-    def test_context_is_bounded_and_deletion_removes_state_and_events(self):
+    def test_context_is_bounded_and_never_exposes_scores(self):
         state = apply_relationship_event(
             self.user.telegram_user_id, self.chat,
             EmotionalEvent("mild_disrespect", event_id="h", severity=12),
         )
         context = relationship_context(state)
-        self.assertEqual(context["remaining_hurt"], 12)
+        self.assertEqual(set(context), CONTEXT_KEYS)
         self.assertNotIn("h", context)
+        for numeric in ("hurt_score", "repair_progress", "remaining_hurt", "warmth", "trust_context"):
+            self.assertNotIn(numeric, context)
+        self.assertEqual(context["relationship_status"], "hurt")
+        self.assertIs(context["conflict_active"], True)
+        self.assertIn("already_forgave", context["do_not_claim"])
+        self.assertTrue(context["tone_directive"])
+
+    def test_context_follows_every_phase(self):
+        neutral = relationship_context(get_relationship_state(self.user.telegram_user_id, self.chat))
+        self.assertEqual(neutral["relationship_status"], "neutral")
+        self.assertIs(neutral["conflict_active"], False)
+        self.assertIs(neutral["may_request_apology"], False)
+        self.assertIs(neutral["may_reference_past_conflict_playfully"], False)
+        self.assertIn("still_upset", neutral["do_not_claim"])
+
+        hurt = relationship_context(apply_relationship_event(
+            self.user.telegram_user_id, self.chat,
+            EmotionalEvent("serious_disrespect", event_id="conflict", severity=40),
+        ))
+        self.assertEqual(hurt["relationship_status"], "hurt")
+        self.assertIs(hurt["may_request_apology"], True)
+
+        repairing = relationship_context(apply_relationship_event(
+            self.user.telegram_user_id, self.chat, "sincere_apology", event_id="apology",
+        ))
+        self.assertEqual(repairing["relationship_status"], "repairing")
+        self.assertIs(repairing["conflict_active"], True)
+
+        reconciled = relationship_context(apply_relationship_event(
+            self.user.telegram_user_id, self.chat, "acknowledgement_of_harm", event_id="ack",
+        ))
+        self.assertEqual(reconciled["relationship_status"], "reconciled")
+        self.assertIs(reconciled["conflict_is_reconciled"], True)
+        self.assertIs(reconciled["conflict_active"], False)
+        self.assertIs(reconciled["may_request_apology"], False)
+        self.assertIs(reconciled["may_reference_past_conflict_playfully"], True)
+        self.assertIn("requires_new_apology", reconciled["do_not_claim"])
+        self.assertIn("waiting_for_apology", reconciled["do_not_claim"])
+
+    def test_three_apologies_persist_one_forgiveness_event(self):
+        apply_relationship_event(
+            self.user.telegram_user_id, self.chat,
+            EmotionalEvent("serious_disrespect", event_id="conflict", severity=40),
+        )
+        for index in range(3):
+            apply_relationship_event(
+                self.user.telegram_user_id, self.chat,
+                "sincere_apology", event_id=f"apology-{index}",
+            )
+        row = NoyaRelationshipState.objects.get(
+            user__telegram_user_id=self.user.telegram_user_id, conversation=self.chat,
+        )
+        self.assertEqual(row.repair_progress, 25)
+        self.assertEqual(row.reconciliation_count, 0)
+        self.assertEqual(row.relationship_status, "repairing")
+        apply_relationship_event(self.user.telegram_user_id, self.chat, "acknowledgement_of_harm", event_id="ack")
+        row.refresh_from_db()
+        self.assertEqual(row.reconciliation_count, 1)
+        self.assertEqual(row.relationship_status, "reconciled")
+        self.assertEqual(row.active_conflict_id, "")
+        reconciled_at = row.last_reconciliation_at
+        # Apologies after forgiveness never re-forgive or re-open the conflict.
+        apply_relationship_event(self.user.telegram_user_id, self.chat, "sincere_apology", event_id="late")
+        row.refresh_from_db()
+        self.assertEqual(row.reconciliation_count, 1)
+        self.assertEqual(row.relationship_status, "reconciled")
+        self.assertEqual(row.last_reconciliation_at, reconciled_at)
+
+    def test_reconciled_state_is_stable_across_reads_and_decay(self):
+        apply_relationship_event(
+            self.user.telegram_user_id, self.chat,
+            EmotionalEvent("mild_disrespect", event_id="conflict", severity=10),
+        )
+        apply_relationship_event(self.user.telegram_user_id, self.chat, "sincere_apology", event_id="apology")
+        for _ in range(3):
+            state = get_relationship_state(self.user.telegram_user_id, self.chat)
+            self.assertEqual(state.relationship_status, "reconciled")
+            self.assertEqual(state.reconciliation_count, 1)
+            self.assertIsNone(state.active_conflict_id)
+        future = timezone.now() + timedelta(days=60)
+        later = get_relationship_state(self.user.telegram_user_id, self.chat, now=future)
+        self.assertEqual(later.relationship_status, "reconciled")
+        self.assertEqual(later.reconciliation_count, 1)
+
+    def test_ordinary_messages_never_start_a_conflict(self):
+        for kind in ("friendly_message", "quality_criticism", "normal_disagreement", "playful_teasing"):
+            state = apply_relationship_event(
+                self.user.telegram_user_id, self.chat, kind, event_id=f"kind-{kind}",
+            )
+            self.assertEqual(state.relationship_status, "neutral", kind)
+            self.assertEqual(state.hurt_score, 0, kind)
+
+    def test_deletion_removes_state_and_events(self):
+        apply_relationship_event(
+            self.user.telegram_user_id, self.chat,
+            EmotionalEvent("mild_disrespect", event_id="h", severity=12),
+        )
         self.assertEqual(delete_relationship_state(self.user.telegram_user_id, self.chat), 1)
         self.assertFalse(NoyaRelationshipEvent.objects.exists())
 

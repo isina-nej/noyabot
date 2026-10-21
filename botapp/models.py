@@ -584,11 +584,28 @@ class NoyaRelationshipState(models.Model):
         default=50, validators=[MinValueValidator(0), MaxValueValidator(100)]
     )
     current_social_mood = models.CharField(max_length=32, default="neutral")
+    # Explicit, database-authoritative phase of the relationship: the language
+    # model may vary wording but never contradicts this value.
+    relationship_status = models.CharField(
+        max_length=16,
+        default="neutral",
+        choices=[
+            ("neutral", "Neutral"),
+            ("hurt", "Hurt"),
+            ("repairing", "Repairing"),
+            ("reconciled", "Reconciled"),
+        ],
+    )
     active_conflict_id = models.CharField(max_length=128, blank=True, default="")
     processed_event_ids = models.JSONField(default=list, blank=True)
+    # Per-conflict repair credits (``<conflict id>|<credit class>``) so repeated
+    # apologies inside one conflict cannot keep buying forgiveness.
+    repair_credits = models.JSONField(default=list, blank=True)
+    reconciliation_count = models.PositiveSmallIntegerField(default=0)
     last_interaction_at = models.DateTimeField(null=True, blank=True)
     last_negative_event_at = models.DateTimeField(null=True, blank=True)
     last_reconciliation_at = models.DateTimeField(null=True, blank=True)
+    conflict_started_at = models.DateTimeField(null=True, blank=True)
     created_at = models.DateTimeField(auto_now_add=True)
     updated_at = models.DateTimeField(auto_now=True)
 

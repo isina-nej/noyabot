@@ -16,13 +16,21 @@ class SearchDecision(str, Enum):
 
 @dataclass(slots=True)
 class SearchResult:
-    """Represents a single search result from any search provider."""
+    """Represents a single search result from any search provider.
+
+    ``published_at`` is the SOURCE PUBLICATION date (``YYYY-MM-DD``) when the
+    provider/snippet exposed one, and ``""`` when it did not. It is never
+    inferred: an empty string means "unknown", not "today". ``age_days`` is
+    filled in by the ranker and is ``None`` for undated results.
+    """
     title: str
     url: str
     snippet: str
     source: str = "duckduckgo"
     rank: int = 0
     score: float = 0.0
+    published_at: str = ""
+    age_days: int | None = None
 
     def to_dict(self) -> dict[str, Any]:
         return {
@@ -32,6 +40,8 @@ class SearchResult:
             "source": self.source,
             "rank": self.rank,
             "score": self.score,
+            "published_at": self.published_at,
+            "age_days": self.age_days,
         }
 
 

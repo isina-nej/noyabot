@@ -17,9 +17,14 @@ async def investigate(ctx: AgentContext, bot, params) -> str:
         bot=bot,
         user_text=ctx.command_text or "بررسی کامل",
     )
-    if result.ok and result.answer:
-        return result.answer
-    return result.answer or "❌ بررسی مرحله‌ای ناموفق بود."
+    # The harness "finish" answer is raw model prose: run it through the same
+    # outbound sanitizer as the chat path before it reaches Telegram.
+    from botapp.agent.responses import sanitize_outgoing_text
+
+    answer = sanitize_outgoing_text(result.answer or "")
+    if answer:
+        return answer
+    return "❌ بررسی مرحله‌ای ناموفق بود."
 
 
 register_tool(

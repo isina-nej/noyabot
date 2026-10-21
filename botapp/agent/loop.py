@@ -14,18 +14,41 @@ from typing import Any
 import httpx
 
 from .registry import registry
-from .responses import clean_model_response
+from .responses import sanitize_outgoing_text
 
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 8  # safety cap — Hermes uses iteration_budget
 
+#: Provider fields that carry *internal* reasoning, never user-facing text.
+#: Some 9Router/OpenAI-compatible backends put their planning notes
+#: (``→ skipped: … add when: …``) in these fields; merging them into
+#: ``content`` leaks them straight into the Telegram chat.
+REASONING_FIELDS = ("reasoning_content", "reasoning", "thinking")
+
+
+def _drop_reasoning(source: dict) -> int:
+    """Return the character count of reasoning in *source* — never its text."""
+    total = 0
+    for field in REASONING_FIELDS:
+        value = (source or {}).get(field)
+        if isinstance(value, str):
+            total += len(value)
+    return total
+
 
 def _parse_sse_stream(raw: str) -> dict | None:
-    """Parse SSE stream response, reassemble chunks into a single message dict."""
+    """Parse SSE stream response, reassemble chunks into a single message dict.
+
+    Only ``delta.content`` is ever used for the assistant message.  Provider
+    reasoning (``delta.reasoning_content`` / ``delta.reasoning`` /
+    ``delta.thinking``) is dropped entirely; only its character count is
+    reported back, under the top-level ``reasoning_chars`` key.
+    """
     import json as _json
     message: dict = {"role": "assistant", "content": ""}
     tool_calls_map: dict[int, dict] = {}
+    reasoning_chars = 0
     for line in raw.split("\n"):
         line = line.strip()
         if not line.startswith("data: "):
@@ -45,10 +68,12 @@ def _parse_sse_stream(raw: str) -> dict | None:
         c = delta.get("content")
         if c:
             message["content"] = (message.get("content") or "") + c
-        # reasoning (for thinking models)
-        rc = delta.get("reasoning_content")
-        if rc:
-            message["content"] = (message.get("content") or "") + rc
+        # Never merge provider reasoning into the user-visible answer.  Some
+        # 9Router/SSE responses place internal planning notes (including
+        # ``skipped`` annotations) in ``reasoning_content`` / ``reasoning`` /
+        # ``thinking``; none of it is part of the assistant message, so only a
+        # character count is kept for observability.
+        reasoning_chars += _drop_reasoning(delta)
         # tool calls
         for tc_delta in delta.get("tool_calls", []):
             idx = tc_delta.get("index", 0)
@@ -69,7 +94,10 @@ def _parse_sse_stream(raw: str) -> dict | None:
 
     if tool_calls_map:
         message["tool_calls"] = [tool_calls_map[i] for i in sorted(tool_calls_map)]
-    return {"choices": [{"message": message, "finish_reason": "stop"}]}
+    return {
+        "choices": [{"message": message, "finish_reason": "stop"}],
+        "reasoning_chars": reasoning_chars,
+    }
 
 
 async def run_agent_loop(
@@ -177,16 +205,43 @@ async def run_agent_loop(
         msg = choice.get("message", {})
         finish = choice.get("finish_reason", "")
 
+        # Reasoning is never user-visible: record only how much was dropped.
+        reasoning_chars = data.get("reasoning_chars") if isinstance(data, dict) else None
+        if reasoning_chars is None:
+            reasoning_chars = _drop_reasoning(msg)
+        if reasoning_chars:
+            metadata["reasoning_chars_dropped"] = metadata.get("reasoning_chars_dropped", 0) + reasoning_chars
+
+        # Only ``message.content`` may become user-visible text — a JSON (non
+        # SSE) response can carry ``reasoning_content`` too, and it is ignored.
+        raw_content = msg.get("content") or ""
+
         # ── No tool calls → done ──
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
-            final_text = clean_model_response(msg.get("content", "") or "")
+            final_text = sanitize_outgoing_text(raw_content)
+            if not final_text:
+                # Never fall back to the raw text: it may be nothing but an
+                # internal planning annotation.
+                metadata["sanitized_empty"] = True
+                if raw_content.strip():
+                    logger.warning(
+                        "[NOYA-AGENT] Reply was entirely an internal annotation (%d chars); suppressed",
+                        len(raw_content),
+                    )
             if used_tools:
                 metadata["tools_used"] = used_tools
             return final_text, metadata
 
         # ── Execute tool calls (parallel like Hermes) ──
-        messages.append({"role": "assistant", "content": msg.get("content"), "tool_calls": tool_calls})
+        # The assistant turn pushed back into the conversation is sanitized as
+        # well, so a leaked note cannot be re-primed into the next iteration.
+        # Tool results stay raw: tool output is data, not outbound text.
+        messages.append({
+            "role": "assistant",
+            "content": sanitize_outgoing_text(raw_content),
+            "tool_calls": tool_calls,
+        })
 
         for tc in tool_calls:
             fn = tc.get("function", {})

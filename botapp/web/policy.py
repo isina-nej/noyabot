@@ -216,6 +216,91 @@ def resolve_search_intent(text: str) -> tuple[SearchDecision, str]:
     return SearchDecision.NO_SEARCH, "stable_knowledge_or_chat"
 
 
+# ── Freshness intent ──
+
+# Words that mean "I want the newest thing that exists right now".
+FRESHNESS_LATEST_TRIGGERS = (
+    "آخرین خبر",
+    "آخرین اخبار",
+    "آخرین",
+    "جدیدترین",
+    "تازه‌ترین",
+    "تازه ترین",
+    "امروز",
+    "همین الان",
+    "همین حالا",
+    "هم اکنون",
+    "الان",
+    "خبر فوری",
+    "اخبار فوری",
+    "breaking news",
+    "breaking",
+    "just announced",
+    "just in",
+    "latest",
+    "today",
+)
+
+# Words that mean "something from the last few weeks is good enough".
+FRESHNESS_RECENT_TRIGGERS = (
+    "این هفته",
+    "هفته گذشته",
+    "هفته پیش",
+    "هفتهٔ گذشته",
+    "این ماه",
+    "ماه گذشته",
+    "ماه پیش",
+    "اخیر",
+    "تازه",
+    "این روزها",
+    "recent",
+    "recently",
+    "this week",
+    "this month",
+    "past week",
+    "last week",
+)
+
+
+def _freshness_key(text: str) -> str:
+    """Normalization key tolerant to ZWNJ, Arabic ی/ک and spacing variants."""
+    norm = normalize_persian_text(text or "").casefold()
+    # ZWNJ/ZWNJ-free spellings must collapse to the same key: «تازه‌ترین»
+    # and «تازهترین» are the same word.
+    norm = norm.replace("\u200c", " ").replace("\u200d", " ")
+    norm = re.sub(r"\s+", " ", norm).strip()
+    return norm
+
+
+def _freshness_matches(key: str, trigger: str) -> bool:
+    """Substring match that also ignores spaces inside the trigger phrase."""
+    if trigger in key:
+        return True
+    squeezed_trigger = trigger.replace(" ", "")
+    if squeezed_trigger != trigger and squeezed_trigger in key.replace(" ", ""):
+        return True
+    return False
+
+
+def freshness_intent(text: str) -> str:
+    """Classify how fresh the caller expects the answer to be.
+
+    Returns ``"latest"`` (today / breaking / newest), ``"recent"`` (this week,
+    this month, lately) or ``"general"``. Used to bias ranking and to decide
+    whether a recency warning must be surfaced — it never withholds results.
+    """
+    key = _freshness_key(text)
+    if not key:
+        return "general"
+    for trigger in FRESHNESS_LATEST_TRIGGERS:
+        if _freshness_matches(key, trigger):
+            return "latest"
+    for trigger in FRESHNESS_RECENT_TRIGGERS:
+        if _freshness_matches(key, trigger):
+            return "recent"
+    return "general"
+
+
 def extract_clean_search_query(text: str) -> str:
     """Extract the real search keywords by stripping explicit conversational prefixes."""
     norm = normalize_persian_text(text or "").strip()

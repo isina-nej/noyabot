@@ -245,7 +245,9 @@ async def _dispatch(message: Message, command: str) -> None:
         sent = await message.reply(result.text, reply_markup=_confirmation_keyboard(result.confirm_token))
         await _store_confirmation_message_id(result.confirmation.id, sent.message_id)
         return
-    await message.reply(result.text)
+    from botapp.agent.responses import sanitize_outgoing_text
+
+    await message.reply(sanitize_outgoing_text(result.text) or "پاسخی دریافت نشد.")
 
 
 @router.message(Command("agent"))

@@ -374,7 +374,11 @@ async def _ai_narrative(facts_text: str) -> str | None:
                 )
                 return None
             content = data["choices"][0]["message"]["content"]
-            return (content or "").strip() or None
+            # Same outbound gate as the Noya chat path: model prose must never
+            # carry internal planning annotations into an admin chat.
+            from botapp.agent.responses import sanitize_outgoing_text
+
+            return sanitize_outgoing_text(content or "") or None
     except httpx.ReadTimeout:
         logger.warning("analytics briefing AI call timed out (ReadTimeout) after 45s")
         return None
