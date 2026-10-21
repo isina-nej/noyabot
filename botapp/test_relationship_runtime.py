@@ -59,3 +59,21 @@ class RelationshipRuntimeTests(TestCase):
             conversation_id="telegram:-700:0", chat_type="supergroup",
         )
         self.assertEqual(get_relationship_state(42, other_chat).hurt_score, 0)
+
+    def test_same_apology_can_repair_a_new_conflict_after_forgiveness(self):
+        async def provider(question, session_id, **kwargs):
+            return "پاسخ"
+
+        for message_id, text in (
+            (1, "بی‌احترامی کردی"),
+            (2, "ببخشید، اشتباه کردم"),
+            (3, "بی‌احترامی کردی"),
+            (4, "ببخشید، اشتباه کردم"),
+        ):
+            async_to_sync(run_ai_with_memory)(
+                _message(chat_id=-702, message_id=message_id, text=text),
+                "سؤال", provider, "telegram:-702",
+            )
+        conversation = MemoryConversation.objects.get(conversation_id="telegram:-702:0")
+        state = get_relationship_state(42, conversation)
+        self.assertEqual(state.remaining_hurt, 0)

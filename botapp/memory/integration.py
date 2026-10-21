@@ -229,7 +229,11 @@ async def _relationship_context_for_message(message) -> dict:
             normalized = " ".join(raw_text.casefold().split())
             if event.kind in {"sincere_apology", "acknowledgement_of_harm", "behavioral_improvement"}:
                 digest = hashlib.sha256(normalized.encode("utf-8")).hexdigest()[:16]
-                event_id = f"repair:{conversation.id}:{event.kind}:{digest}"
+                prior = await sync_to_async(get_relationship_state, thread_sensitive=True)(
+                    int(user.id), conversation,
+                )
+                conflict = prior.active_conflict_id or "none"
+                event_id = f"repair:{conversation.id}:{event.kind}:{conflict}:{digest}"
             else:
                 event_id = f"telegram:{chat.id}:{getattr(message, 'message_id', 0)}:social"
             state = await sync_to_async(apply_relationship_event, thread_sensitive=True)(
