@@ -95,6 +95,23 @@ class MultiBotTests(SimpleTestCase):
         assert handled == "handled"
         handler.assert_awaited_once()
 
+    def test_command_targeting_unknown_other_bot_is_ignored(self):
+        """A single-bot deployment must ignore /start@other_bot too."""
+        middleware = MultiBotGroupDeduplicationMiddleware()
+        handler = AsyncMock(return_value="handled")
+        message = self.message(text="/start@mira")
+        bot = AsyncMock()
+        bot.me.return_value = SimpleNamespace(username="noya_bot", id=7)
+
+        result = async_to_sync(middleware)(
+            handler,
+            message,
+            {"event_update": SimpleNamespace(edited_message=None), "bot": bot},
+        )
+
+        assert result is None
+        handler.assert_not_awaited()
+
     def test_emoji_router_precedes_main_router(self):
         # The main router ends with an unfiltered catch-all that would otherwise
         # consume /add_emoji and /set_welcome_emoji, so emoji_router must be

@@ -41,6 +41,14 @@ class NoyaSystemPromptTest(TestCase):
         self.assertIn("CREATOR_CONFIG", prompt)
         self.assertIn("tg://user?id=", prompt)
 
+    def test_prompt_keeps_internal_artifacts_out_of_natural_replies(self):
+        prompt = get_noya_system_prompt()
+        self.assertIn("پاسخ نهایی را مستقیم، طبیعی", prompt)
+        self.assertIn("skipped", prompt)
+        self.assertIn("add when", prompt)
+        self.assertIn("کنایه را لفظ‌به‌لفظ تفسیر نکن", prompt)
+        self.assertIn("مثل یک هم‌صحبت جواب بده", prompt)
+
     @patch.dict(
         os.environ,
         {
@@ -88,6 +96,16 @@ class NoyaSystemPromptTest(TestCase):
 
 
 class NoyaSystemPromptAPITest(TestCase):
+    @patch("botapp.agent.loop.run_agent_loop", new_callable=AsyncMock)
+    def test_agent_path_preserves_authenticated_speaker(self, mock_loop):
+        mock_loop.return_value = ("سلام", {})
+        result = async_to_sync(call_noya_api)(
+            "سلام", "sess-speaker", speaker_user_id=42, speaker_name="Ali"
+        )
+        self.assertEqual(result, ("سلام", {}))
+        self.assertEqual(mock_loop.await_args.kwargs["speaker_user_id"], 42)
+        self.assertEqual(mock_loop.await_args.kwargs["speaker_name"], "Ali")
+
     @patch("botapp.services.httpx.AsyncClient.post")
     def test_call_noya_api_sends_system_prompt(self, mock_post):
         mock_response = AsyncMock()

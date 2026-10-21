@@ -66,7 +66,28 @@ class NoyaContextTest(SimpleTestCase):
         self.assertIn("ریپلای روی اصلی", payload)
         self.assertIn("[پیام ریپلای‌شده — Sara (@sara)]", payload)
         self.assertIn("پیام اصلی", payload)
+        self.assertIn('"message_id":2', payload)
+        self.assertIn('"reply_to_message_id":1', payload)
         self.assertIn("[درخواست فعلی]\nاینو خلاصه کن", payload)
+
+    def test_recent_context_keeps_chat_and_speaker_identity(self):
+        first = _msg(
+            text="بهبهان هوا خوبه",
+            chat_id=-1001,
+            message_id=20,
+            from_user=SimpleNamespace(id=11, full_name="Sara", first_name="Sara", username="sara"),
+        )
+        other_chat = _msg(text="قیمت دلار؟", chat_id=-2002, message_id=21,
+                          from_user=SimpleNamespace(id=22, full_name="Reza", first_name="Reza", username="reza"))
+        remember_group_message(first)
+        remember_group_message(other_chat)
+        current = _msg(text="نویا جواب بده", chat_id=-1001, message_id=22,
+                       from_user=SimpleNamespace(id=33, full_name="Ali", first_name="Ali", username="ali"))
+        payload = build_noya_user_payload(current, "جواب بده")
+        self.assertIn('"chat_id":-1001', payload)
+        self.assertIn('"user_id":11', payload)
+        self.assertIn('"text":"نویا جواب بده"', payload)
+        self.assertNotIn("قیمت دلار؟", payload)
 
     def test_name_only_on_reply_reads_message(self):
         replied = _msg(text="فردا جلسه ساعت چند؟", message_id=5)

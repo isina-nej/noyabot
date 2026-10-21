@@ -76,9 +76,11 @@ def parse_duration_minutes(text: str) -> int | None:
 
 def extract_int(text: str) -> int | None:
     text = normalize_digits(text)
-    match = re.search(r"\d+", text)
+    # Keep thousands separators attached to the number (e.g. 269,400
+    # تومان); taking only the first digit group silently changed its value.
+    match = re.search(r"\d(?:[\d,٬،]\d)*", text)
     if match:
-        return int(match.group())
+        return int(re.sub(r"[,٬،]", "", match.group()))
     for token in text.split():
         value = _word_number(token)
         if value is not None and value == int(value):

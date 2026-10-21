@@ -261,6 +261,8 @@ async def call_noya_api(
             question=question,
             session_id=session_id,
             system_prompt=system_prompt,
+            speaker_user_id=speaker_user_id,
+            speaker_name=speaker_name,
         )
         agent_ms = (monotonic() - t_agent) * 1000
         total_ms = (monotonic() - t0) * 1000
@@ -325,7 +327,8 @@ async def _call_noya_api_direct(
             content = data["choices"][0]["message"]["content"]
             ai_ms = (monotonic() - t_ai) * 1000
             logger.info("[NOYA-TIMING] 🤖 Direct API %.1fms chars=%d", ai_ms, len(content))
-            return content, {}
+            from botapp.agent.responses import clean_model_response
+            return clean_model_response(content), {}
     except httpx.ReadTimeout:
         logger.warning("Direct API read timed out (ReadTimeout) after %.1fs", NOYA_API_TIMEOUT)
         return "نویا این لحظه شلوغه و جواب نداد.", {}
@@ -566,7 +569,10 @@ async def call_ai_api(
         return "خطا در ارتباط با هوش مصنوعی. لطفا دوباره تلاش کنید."
 
     content = data.get("content") if isinstance(data, dict) else None
-    return content if isinstance(content, str) and content.strip() else "پاسخی دریافت نشد."
+    if isinstance(content, str) and content.strip():
+        from botapp.agent.responses import clean_model_response
+        return clean_model_response(content) or "پاسخی دریافت نشد."
+    return "پاسخی دریافت نشد."
 
 
 # ---------- Noya TTS (Text-to-Speech via 9Router) ----------

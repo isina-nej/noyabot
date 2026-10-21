@@ -2,7 +2,32 @@
 
 from __future__ import annotations
 
+import re
+
 PERSIAN_DIGITS = str.maketrans("0123456789", "۰۱۲۳۴۵۶۷۸۹")
+
+_INTERNAL_NOTE_RE = re.compile(
+    r"^\s*(?:→|->)\s*skipped\s*:\s*.+\badd\s+when\s*:\s*.+$",
+    re.IGNORECASE,
+)
+
+
+def clean_model_response(text: str) -> str:
+    """Remove a known internal planning note without touching user content.
+
+    The filter is line-anchored and disabled inside fenced code so arrows and
+    programming examples remain intact.
+    """
+    lines: list[str] = []
+    in_fence = False
+    for line in (text or "").splitlines():
+        stripped = line.strip()
+        if stripped.startswith("```"):
+            in_fence = not in_fence
+        if not in_fence and _INTERNAL_NOTE_RE.fullmatch(line):
+            continue
+        lines.append(line)
+    return "\n".join(lines).strip()
 
 
 def fa_number(value: int | float) -> str:

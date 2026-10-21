@@ -14,6 +14,7 @@ from typing import Any
 import httpx
 
 from .registry import registry
+from .responses import clean_model_response
 
 logger = logging.getLogger(__name__)
 
@@ -77,6 +78,8 @@ async def run_agent_loop(
     *,
     system_prompt: str = "",
     conversation_history: list[dict] | None = None,
+    speaker_user_id: int | None = None,
+    speaker_name: str = "",
     on_token=None,
 ) -> tuple[str, dict]:
     """Run the Hermes-style agent loop.
@@ -99,6 +102,14 @@ async def run_agent_loop(
 
     messages: list[dict[str, Any]] = []
     if system_prompt:
+        if speaker_user_id is not None:
+            from botapp.ai.prompts import build_speaker_block
+            speaker_block = build_speaker_block(
+                speaker_user_id=speaker_user_id,
+                speaker_name=speaker_name,
+            )
+            if speaker_block:
+                system_prompt = f"{system_prompt}\n\n{speaker_block}"
         messages.append({"role": "system", "content": system_prompt})
     if conversation_history:
         messages.extend(conversation_history)
@@ -169,7 +180,7 @@ async def run_agent_loop(
         # ── No tool calls → done ──
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
-            final_text = msg.get("content", "") or ""
+            final_text = clean_model_response(msg.get("content", "") or "")
             if used_tools:
                 metadata["tools_used"] = used_tools
             return final_text, metadata

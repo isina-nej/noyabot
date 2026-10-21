@@ -447,6 +447,14 @@ PLAIN_MODERATION_COMMANDS = {
 }
 
 
+def plain_moderation_command(command_name: str, *, has_reply: bool) -> str | None:
+    """Resolve a natural moderation keyword without hijacking ordinary prose."""
+    action = PLAIN_MODERATION_COMMANDS.get((command_name or "").casefold())
+    if action in {"warn", "mute", "unmute", "ban", "unban", "delete"} and not has_reply:
+        return None
+    return action
+
+
 def is_group_chat(message: Message) -> bool:
     return message.chat.type in {ChatType.GROUP, ChatType.SUPERGROUP}
 
@@ -1991,7 +1999,12 @@ async def _handle_noya_text_message(message: Message, bot: Bot, *, allow_command
         return
 
     command_name, args = plain_command(body)
-    moderation_command = PLAIN_MODERATION_COMMANDS.get(command_name)
+    # Natural-language member actions need a reply target.  Slash commands
+    # are handled by the dedicated aiogram handlers above.
+    moderation_command = plain_moderation_command(
+        command_name,
+        has_reply=message.reply_to_message is not None,
+    )
     if moderation_command:
         handlers = {
             "warn": lambda: perform_warn(message, bot, args),
@@ -2374,6 +2387,16 @@ class MultiBotGroupDeduplicationMiddleware(BaseMiddleware):
                 kind = "edited_message" if getattr(update, "edited_message", None) else "message"
                 return kind, chat.id, event.message_id
             text = event.text or ""
+            # Telegram delivers every group command to every bot.  A command
+            # addressed to a different bot must be ignored even when that bot
+            # is not present in ``bot_usernames`` (for example ``/start@mira``
+            # with a single-bot deployment).  Keep ordinary @mentions routed
+            # normally; only a leading slash command is target-sensitive.
+            command_target = re.match(r"^/\w+@([A-Za-z0-9_]{1,})\b", text.strip())
+            if command_target:
+                username = me.username or ""
+                if command_target.group(1).casefold() != username.casefold():
+                    return "not-targeted"
             target = re.search(r"@([A-Za-z0-9_]{5,})\b", text)
             if target and target.group(1).casefold() in self.bot_usernames:
                 username = me.username or ""

@@ -42,6 +42,7 @@ from botapp.agent.risk import HIGH, LOW, resolve_risk
 from botapp.agent.schemas import AgentDecision
 from botapp.agent import callbacks
 from botapp.agent_handlers import AgentTriggerFilter
+from botapp.management.commands.runbot import plain_moderation_command
 from botapp.models import (
     AgentAuditLog,
     AgentConfirmation,
@@ -223,6 +224,15 @@ class AdminProtectionTests(SimpleTestCase):
 class ParserUnitTests(SimpleTestCase):
     def test_normalize_persian_digits(self):
         self.assertEqual(normalize_digits("۳۰ و ۱۲۴۵۰"), "30 و 12450")
+
+    def test_extract_int_preserves_thousands_separators(self):
+        self.assertEqual(extract_int("۲۶۹,۴۰۰ تومان"), 269400)
+        self.assertEqual(extract_int("۲۶۹٬۴۰۰ تومان"), 269400)
+
+    def test_plain_member_action_requires_reply_target(self):
+        self.assertIsNone(plain_moderation_command("سکوت", has_reply=False))
+        self.assertEqual(plain_moderation_command("سکوت", has_reply=True), "mute")
+        self.assertEqual(plain_moderation_command("قفل", has_reply=False), "lock")
 
     def test_duration_digits_minutes(self):
         self.assertEqual(parse_duration_minutes("۳۰ دقیقه"), 30)
