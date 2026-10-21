@@ -47,6 +47,12 @@ class MemoryCoreTest(TestCase):
         assert len(candidates) == 1
         assert candidates[0].category == "relationship"
 
+    def test_relationship_note_preserves_explicit_emotional_score(self):
+        candidates = extract_candidates("یادت باشه من از علی ۷۰ درصد ناراحتم")
+        assert len(candidates) == 1
+        assert candidates[0].category == "relationship"
+        assert "۷۰ درصد" in candidates[0].content
+
     def test_memory_context_keeps_relationship_category(self):
         ingest_message(42, self.group, 77, "یادت باشه علی با من مهربان بود و کمکم کرد", timezone.now())
         context = build_memory_context(42, self.group, "علی مهربان", max_tokens=20)

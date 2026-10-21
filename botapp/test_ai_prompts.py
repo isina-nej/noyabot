@@ -56,6 +56,10 @@ class NoyaSystemPromptTest(TestCase):
         self.assertIn("دلخور", prompt)
         self.assertIn("عذرخواهی و جبران واقعی", prompt)
         self.assertIn("category=relationship", prompt)
+        self.assertIn("امتیاز دلخوری", prompt)
+        self.assertIn("۰ تا ۱۰۰", prompt)
+        self.assertIn("دلخوری ۷۰", prompt)
+        self.assertIn("شخصیتت دخترانه", prompt)
 
     @patch.dict(
         os.environ,
