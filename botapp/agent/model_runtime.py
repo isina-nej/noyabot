@@ -189,6 +189,8 @@ async def _edit_image(instruction: str = "") -> str:
 
 def ensure_model_first_tools() -> None:
     """Idempotent registration; no permissioned admin tools are exposed."""
+    # Register the established chat catalog even when the loop is imported alone.
+    from . import tools as _built_in_chat_tools  # noqa: F401
     registry.register(Tool(
         name="load_skill",
         description="Load complete instructions for a named available skill before using its specialist tools.",
