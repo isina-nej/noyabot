@@ -87,6 +87,11 @@ def init_telemetry() -> bool:
             _STATE["provider"] = "sdk"
         otel_trace.set_tracer_provider(provider)
         _STATE["tracer"] = otel_trace.get_tracer("botapp.noya")
+        try:
+            from . import otel_signals
+            otel_signals.configure()
+        except Exception:
+            pass
         return True
     except Exception:
         _STATE["provider"] = "correlation"
