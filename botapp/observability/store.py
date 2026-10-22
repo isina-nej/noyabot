@@ -186,6 +186,10 @@ def claim_run(*, stale_after=60):
         # Recover abandoned runs after a worker crash.
         db.execute("UPDATE diagnostic_runs SET status='failed',outcome='failed',error_type='WorkerLost',completed_at=?"
                    " WHERE status='running' AND started_at < ?", (now, now - stale_after))
+        max_running = max(1, min(int(os.getenv("NOYA_OPS_MAX_RUNNING", "1")), 4))
+        running = db.execute("SELECT COUNT(*) FROM diagnostic_runs WHERE status='running'").fetchone()[0]
+        if running >= max_running:
+            return None
         row = db.execute("SELECT run_id,test_id FROM diagnostic_runs WHERE status='queued' ORDER BY created_at LIMIT 1").fetchone()
         if row:
             db.execute("UPDATE diagnostic_runs SET status='running',started_at=? WHERE run_id=?", (now, row["run_id"]))
