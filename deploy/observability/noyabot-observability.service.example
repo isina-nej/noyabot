@@ -6,10 +6,12 @@ After=network.target
 User=noya
 WorkingDirectory=/opt/noyabot
 EnvironmentFile=/opt/noyabot/.env
-ExecStart=/opt/noyabot/.venv/bin/gunicorn config.asgi:application --worker-class uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000 --workers 2
+ExecStart=/opt/noyabot/.venv/bin/uvicorn config.asgi:application --host 127.0.0.1 --port 8000 --workers 2
 Restart=on-failure
 NoNewPrivileges=true
 PrivateTmp=true
+ReadWritePaths=/var/lib/noyaops
+UMask=0077
 
 [Install]
 WantedBy=multi-user.target
