@@ -53,6 +53,8 @@ class DjangoObservabilityMiddleware:
     def __call__(self, request):
         token = context.correlation_id_var.set(uuid.uuid4().hex[:12])
         trace_token = context.trace_id_var.set(context.new_trace_id())
+        request_id = (request.headers.get("X-Request-ID", "") or "").strip()[:128]
+        request_token = context.request_id_var.set(request_id or context.correlation_id_var.get())
         started = time.perf_counter()
         try:
             context.bind(operation=f"http.{request.method.lower()}")
@@ -64,4 +66,5 @@ class DjangoObservabilityMiddleware:
             obs_logging.emit("http.request.failed", level="error", error_type=type(exc).__name__)
             raise
         finally:
+            context.request_id_var.reset(request_token)
             context.reset()

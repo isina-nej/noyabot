@@ -24,6 +24,9 @@ from datetime import datetime, timezone
 correlation_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "noya_correlation_id", default=""
 )
+request_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
+    "noya_request_id", default=""
+)
 trace_id_var: contextvars.ContextVar[str] = contextvars.ContextVar(
     "noya_trace_id", default=""
 )
@@ -85,6 +88,7 @@ def new_trace_id() -> str:
 def reset() -> None:
     """Clear every field for test isolation (the worker re-binds per update)."""
     correlation_id_var.set("")
+    request_id_var.set("")
     trace_id_var.set("")
     span_id_var.set("")
     update_id_var.set(0)
@@ -120,6 +124,7 @@ def otel_safe_span_id(value: str) -> str:
 def bind(
     *,
     correlation_id: str | None = None,
+    request_id: str | None = None,
     trace_id: str | None = None,
     span_id: str | None = None,
     update_id: int = 0,
@@ -131,6 +136,8 @@ def bind(
     """Bind correlation fields to the current context (never raw ids)."""
     if correlation_id:
         correlation_id_var.set(correlation_id)
+    if request_id:
+        request_id_var.set(request_id[:128])
     if trace_id:
         trace_id_var.set(trace_id)
     if span_id:
@@ -149,6 +156,7 @@ def snapshot() -> dict:
     """Flatten correlation fields for the current context."""
     return {
         "correlation_id": correlation_id_var.get() or None,
+        "request_id": request_id_var.get() or None,
         "trace_id": trace_id_var.get() or None,
         "span_id": span_id_var.get() or None,
         "otel_trace_id": otel_trace_id_var.get() or None,

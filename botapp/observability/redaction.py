@@ -45,7 +45,10 @@ _JWT_RE = re.compile(r"\beyJ[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{5,}\.[A-Za-z0-9_-]{
 def redact_string(value: str, *, max_length: int = 200) -> str:
     """Redact credential shapes inside a free string (bounded)."""
     text = str(value)[: max(max_length, 20)]
-    for pattern in (_JWT_RE, _TELEGRAM_TOKEN_RE, _BEARER_RE):
+    # Keep shape based scrubbing here (rather than only key based scrubbing):
+    # provider errors and URLs routinely carry credentials under arbitrary keys.
+    for pattern in (_JWT_RE, _TELEGRAM_TOKEN_RE, _BEARER_RE,
+                    _HEX64_RE, _LONG_B64_RE, _TOKEN_URLSAFE_RE):
         text = pattern.sub("[REDACTED]", text)
     if _SENSITIVE_KEY_RE.match(text):
         return "[REDACTED]"

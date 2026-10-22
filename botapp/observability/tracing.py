@@ -8,6 +8,7 @@ from __future__ import annotations
 
 import logging
 import os
+import secrets
 
 logger = logging.getLogger("botapp.observability.tracing")
 
@@ -139,15 +140,29 @@ def start_span(name: str, **attributes):
 
             @contextlib.contextmanager
             def _otel():
+                from . import context as ctx
                 with _STATE["tracer"].start_as_current_span(
                     name, kind=SpanKind.INTERNAL
                 ) as span:
+                    span_context = span.get_span_context()
+                    trace_value = format(span_context.trace_id, "032x") if span_context.is_valid else ""
+                    span_value = format(span_context.span_id, "016x") if span_context.is_valid else ""
+                    trace_token = ctx.trace_id_var.set(trace_value) if trace_value else None
+                    span_token = ctx.span_id_var.set(span_value) if span_value else None
+                    operation_token = ctx.operation_var.set(name)
                     for key, value in attributes.items():
                         try:
                             span.set_attribute(str(key), str(value)[:200])
                         except Exception:
                             pass
-                    yield span
+                    try:
+                        yield span
+                    finally:
+                        if span_token is not None:
+                            ctx.span_id_var.reset(span_token)
+                        if trace_token is not None:
+                            ctx.trace_id_var.reset(trace_token)
+                        ctx.operation_var.reset(operation_token)
 
             return _otel()
     except Exception:
@@ -158,9 +173,15 @@ def start_span(name: str, **attributes):
 
     @contextlib.contextmanager
     def _fallback():
-        ctx.span_id_var.set(ctx.otel_safe_span_id(name))
-        ctx.operation_var.set(name)
-        yield None
+        # A stage can execute repeatedly in one trace (agent iterations and
+        # retries); derive a fresh span id for each invocation.
+        span_token = ctx.span_id_var.set(secrets.token_hex(8))
+        operation_token = ctx.operation_var.set(name)
+        try:
+            yield None
+        finally:
+            ctx.span_id_var.reset(span_token)
+            ctx.operation_var.reset(operation_token)
 
     return _fallback()
 

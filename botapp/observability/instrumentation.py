@@ -130,10 +130,12 @@ def ai_provider_request_end(*, duration_ms: float, status: str, model: str = "",
     _safe(m.observe, m.AI_LATENCY, duration_ms, model=_label(model), status=_reason(status))
     if not ok:
         _safe(m.inc, m.AI_PROVIDER_FAILURES, model=_label(model), kind=_reason(status))
+    if status in {"malformed", "invalid_response"}:
+        _safe(m.inc, m.AI_PROVIDER_MALFORMED, model=_label(model))
     if timed_out:
         _safe(m.inc, m.AI_PROVIDER_TIMEOUTS, model=_label(model))
     if retry:
-        _safe(m.inc, "noya.ai.retries", model=_label(model))
+        _safe(m.inc, "noya.ai.retries", max(1, int(retry)), model=_label(model))
     if streaming_ms:
         _safe(m.observe, m.AI_STREAM_TIME, streaming_ms, model=_label(model))
     if tokens_in:
@@ -144,6 +146,7 @@ def ai_provider_request_end(*, duration_ms: float, status: str, model: str = "",
 
 def ai_sse_malformed(endpoint: str = ""):
     _safe(m.inc, m.AI_SSE_ERRORS, kind="malformed")
+    _safe(m.inc, m.AI_PROVIDER_MALFORMED, endpoint=_label(endpoint) or "_internal")
     _safe(m.emit, "ai.sse_malformed", level="error", endpoint=_label(endpoint) or "_internal")
 
 

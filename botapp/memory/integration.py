@@ -9,7 +9,13 @@ from django.conf import settings
 from django.db.models import Q
 
 from botapp.models import MemoryConversation, MemoryConversationMember, MemoryItem, TelegramUser
-from botapp.observability.instrumentation import instrument_async
+from botapp.observability.instrumentation import (
+    emotion_event_classified,
+    emotion_persistence_failure,
+    instrument_async,
+    memory_lookup_failure,
+    relationship_state_load,
+)
 from .context import MemoryContext, build_memory_context
 from .storage import ingest_message
 
@@ -112,6 +118,7 @@ async def prepare_memory_context(message, query: str) -> MemoryContext:
             max_tokens=int(getattr(settings, "MEMORY_MAX_CONTEXT_TOKENS", 600)),
         )
     except Exception as exc:
+        memory_lookup_failure(kind=type(exc).__name__, direction="read")
         logger.warning(
             "Memory retrieval failed user=%s chat=%s message=%s error=%s",
             getattr(getattr(message, "from_user", None), "id", None),
@@ -177,6 +184,7 @@ async def record_processed_message(message) -> bool:
         )
         return bool(items)
     except Exception as exc:
+        memory_lookup_failure(kind=type(exc).__name__, direction="write")
         logger.warning(
             "Memory ingestion failed user=%s chat=%s message=%s error=%s",
             getattr(getattr(message, "from_user", None), "id", None),
@@ -238,6 +246,11 @@ async def _relationship_context_for_message(message) -> dict:
         user_id = int(user.id)
         event = classify_social_event(raw_text) if raw_text else None
         if event is not None:
+            emotion_event_classified(
+                kind=getattr(event, "kind", "unknown"),
+                confidence=float(getattr(event, "confidence", 0.0) or 0.0),
+            )
+        if event is not None:
             # Event ids are per-message (not per-wording): repeated forgiveness is
             # prevented by the engine's per-conflict credit cap, not by hashing.
             message_id = int(getattr(message, "message_id", 0) or 0)
@@ -249,8 +262,13 @@ async def _relationship_context_for_message(message) -> dict:
             state = await sync_to_async(get_relationship_state, thread_sensitive=True)(
                 user_id, conversation,
             )
+        relationship_state_load(
+            status=getattr(state, "relationship_status", "unknown"),
+            persisted=True,
+        )
         return relationship_context(state)
     except Exception as exc:
+        emotion_persistence_failure(type(exc).__name__)
         logger.warning(
             "Relationship state unavailable user=%s chat=%s error=%s",
             getattr(user, "id", None), getattr(chat, "id", None), type(exc).__name__,

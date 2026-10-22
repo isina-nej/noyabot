@@ -12,6 +12,7 @@ HIGH/write tools are never auto-run here — those stay on the confirmation path
 from __future__ import annotations
 
 import logging
+import time
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -22,7 +23,13 @@ from .permissions import ensure_admin_permission, ensure_bot_capability
 from .registry import registry
 from .risk import LOW
 from .sandbox import run_sandboxed
-from botapp.observability.instrumentation import instrument_async
+from botapp.observability.instrumentation import (
+    agent_tool_dispatch,
+    harness_run_started,
+    harness_step,
+    instrument_async,
+    security_permission_check,
+)
 
 logger = logging.getLogger("botapp.agent")
 
@@ -151,11 +158,18 @@ def _fallback_answer(observations: list[Observation]) -> str:
 
 
 async def _run_tool(ctx, bot, tool_name: str) -> Observation:
+    started = time.perf_counter()
     try:
         tool = registry.get(tool_name)
     except Exception:
+        agent_tool_dispatch(tool=tool_name, duration_ms=0, status="error")
+        harness_step(step_id=tool_name, tool_name=tool_name, outcome="failed", duration_ms=0, error_class="UnknownTool")
         return Observation(kind="note", name="denied", summary=f"ابزار «{tool_name}» پیدا نشد.")
     if not _is_auto_runnable(tool):
+        security_permission_check(allowed=False, permission=getattr(tool, "permission", ""))
+        duration_ms = (time.perf_counter() - started) * 1000
+        agent_tool_dispatch(tool=tool_name, duration_ms=duration_ms, status="denied")
+        harness_step(step_id=tool_name, tool_name=tool_name, outcome="denied", duration_ms=duration_ms, error_class="PermissionDenied")
         return Observation(
             kind="note",
             name="denied",
@@ -165,14 +179,25 @@ async def _run_tool(ctx, bot, tool_name: str) -> Observation:
         ensure_admin_permission(ctx.admin, tool.permission)
         ensure_bot_capability(ctx.bot_capabilities, tool.capability)
     except Exception as exc:
+        security_permission_check(allowed=False, permission=getattr(tool, "permission", ""))
+        duration_ms = (time.perf_counter() - started) * 1000
+        agent_tool_dispatch(tool=tool_name, duration_ms=duration_ms, status="denied")
+        harness_step(step_id=tool_name, tool_name=tool_name, outcome="denied", duration_ms=duration_ms, error_class=type(exc).__name__)
         return Observation(kind="note", name=tool_name, summary=f"مجوز/دسترسی: {exc}")
+    security_permission_check(allowed=True, permission=getattr(tool, "permission", ""))
 
     try:
         validated = tool.validate_params({})
         text = await tool.handler(ctx, bot, validated)
         text = _truncate(str(text or ""))
+        duration_ms = (time.perf_counter() - started) * 1000
+        agent_tool_dispatch(tool=tool_name, duration_ms=duration_ms, status="ok")
+        harness_step(step_id=tool_name, tool_name=tool_name, outcome="ok", duration_ms=duration_ms)
         return Observation(kind="tool", name=tool_name, summary=text, data=text)
     except Exception as exc:
+        duration_ms = (time.perf_counter() - started) * 1000
+        agent_tool_dispatch(tool=tool_name, duration_ms=duration_ms, status="error")
+        harness_step(step_id=tool_name, tool_name=tool_name, outcome="failed", duration_ms=duration_ms, error_class=type(exc).__name__)
         logger.exception("harness tool %s failed", tool_name)
         return Observation(kind="tool", name=tool_name, summary=f"خطا: {exc}")
 
@@ -237,6 +262,7 @@ async def run_investigation(
     step_planner=None,
 ) -> HarnessResult:
     """
+    harness_run_started()
     Multi-step investigate → code → answer loop.
 
     ``step_planner`` is injectable for tests; defaults to ``ask_harness_step``.

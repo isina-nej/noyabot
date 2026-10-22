@@ -1,6 +1,13 @@
 // Full profile collector.  Keep it on a private interface or behind SSH/Tailscale.
 otelcol.receiver.otlp "noya" {
   http { endpoint = "0.0.0.0:4318" }
+  output { metrics = [otelcol.processor.memory_limiter.noya.input], logs = [otelcol.processor.memory_limiter.noya.input], traces = [otelcol.processor.memory_limiter.noya.input] }
+}
+
+otelcol.processor.memory_limiter "noya" {
+  check_interval = "1s"
+  limit = "180MiB"
+  spike_limit = "36MiB"
   output { metrics = [otelcol.processor.batch.noya.input], logs = [otelcol.processor.batch.noya.input], traces = [otelcol.processor.batch.noya.input] }
 }
 
@@ -11,6 +18,18 @@ otelcol.processor.batch "noya" {
 }
 
 otelcol.exporter.otlphttp "openobserve" {
+  // Keep export outages bounded; the application remains fail-open.
+  sending_queue {
+    enabled = true
+    num_consumers = 2
+    queue_size = 1000
+  }
+  retry_on_failure {
+    enabled = true
+    initial_interval = "5s"
+    max_interval = "30s"
+    max_elapsed_time = "5m"
+  }
   client {
     endpoint = "http://openobserve:5080/api/default"
     auth = otelcol.auth.basic.openobserve.handler

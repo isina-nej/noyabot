@@ -382,5 +382,7 @@ NOYAOPS_API_KEY='...' .venv/bin/python -m noyaops doctor
 NOYAOPS_API_KEY='...' .venv/bin/python -m noyaops logs --level error
 \`\`\`
 
-پروفایل سبک در خود Django و با ring محدود کار می‌کند. پروفایل کامل نمونهٔ Grafana Alloy/OpenObserve، فایل داشبورد و واحد systemd را در \`deploy/observability/\` دارد؛ قبل از استفادهٔ production نسخهٔ image، منابع و Secretها را بازبینی کنید.
+برای خروجی ماشینی، \`--json\` را اضافه کنید؛ \`logs --follow\` نیز با cursor محدود به‌صورت polling کار می‌کند. تنظیمات CLI از \`~/.config/noyaops/config.toml\` (با مجوز ۶۰۰) خوانده می‌شود و متغیرهای \`NOYAOPS_*\` روی آن اولویت دارند. گزینه‌های \`status\`، \`health\`، \`runtime\`، \`metrics\`، \`trace\`، \`tests list/run/result\` و \`doctor\` در دسترس هستند؛ درخواست‌های خواندنی retry محدود و شناسهٔ \`X-Request-ID\` دارند.
+
+پروفایل سبک در خود Django و با ring محدود کار می‌کند. پروفایل کامل نمونهٔ Grafana Alloy/OpenObserve، فایل داشبورد و واحد systemd را در \`deploy/observability/\` دارد؛ با \`docker compose --profile full\` اجرا می‌شود و پورت‌ها را روی localhost نگه می‌دارد. قبل از استفادهٔ production نسخهٔ image، منابع، retention و Secretها را بازبینی کنید.
 

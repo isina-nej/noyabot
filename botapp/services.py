@@ -226,7 +226,12 @@ def consume_group_quota(chat_id: int, chat_title: str = "") -> bool:
 from botapp.ai import build_ai_messages
 from botapp.noya_clock import format_clock_reply, is_clock_question
 from botapp.noya_search import maybe_web_search
-from botapp.observability.instrumentation import instrument_async
+from botapp.observability.instrumentation import (
+    ai_provider_request_begin,
+    ai_provider_request_end,
+    ai_sse_malformed,
+    instrument_async,
+)
 
 @instrument_async("ai.request")
 async def call_noya_api(
@@ -312,35 +317,75 @@ async def _call_noya_api_direct(
         "messages": build_ai_messages(question, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images, search_block=search_block),
     }
     t_ai = monotonic()
+    ai_provider_request_begin(model)
     try:
         async with httpx.AsyncClient(timeout=NOYA_API_TIMEOUT) as client:
             response = await client.post(url, headers=headers, json=payload)
             response.raise_for_status()
             text = (response.text or "").strip()
             if not text:
+                ai_provider_request_end(
+                    duration_ms=(monotonic() - t_ai) * 1000,
+                    status="malformed", model=model, http_status=response.status_code,
+                )
                 logger.warning("Direct API returned empty body (status=%s)", response.status_code)
                 return "خطا در ارتباط با نویا (پاسخ خالی).", {}
             try:
                 data = response.json()
             except Exception as json_err:
-                logger.warning(
-                    "Direct API non-JSON response (status=%s): %s",
-                    response.status_code,
-                    type(json_err).__name__,
+                from botapp.agent.loop import _parse_sse_stream
+                data = _parse_sse_stream(text)
+                if not data:
+                    ai_provider_request_end(
+                        duration_ms=(monotonic() - t_ai) * 1000,
+                        status="malformed", model=model, http_status=response.status_code,
+                    )
+                    ai_sse_malformed(url)
+                    logger.warning(
+                        "Direct API non-JSON response (status=%s): %s",
+                        response.status_code,
+                        type(json_err).__name__,
+                    )
+                    return "خطا در پردازش پاسخ نویا.", {}
+            try:
+                content = data["choices"][0]["message"]["content"]
+                if not isinstance(content, str):
+                    raise TypeError("content must be a string")
+            except (KeyError, IndexError, TypeError):
+                ai_provider_request_end(
+                    duration_ms=(monotonic() - t_ai) * 1000,
+                    status="malformed", model=model, http_status=response.status_code,
                 )
                 return "خطا در پردازش پاسخ نویا.", {}
-            content = data["choices"][0]["message"]["content"]
             ai_ms = (monotonic() - t_ai) * 1000
+            usage = data.get("usage") if isinstance(data, dict) else {}
+            ai_provider_request_end(
+                duration_ms=ai_ms,
+                status="ok", model=model, http_status=response.status_code,
+                tokens_in=(usage or {}).get("prompt_tokens"),
+                tokens_out=(usage or {}).get("completion_tokens"),
+            )
             logger.info("[NOYA-TIMING] 🤖 Direct API %.1fms chars=%d", ai_ms, len(content))
             from botapp.agent.responses import sanitize_outgoing_text
             return sanitize_outgoing_text(content) or "خطا در ارتباط با نویا (پاسخ خالی).", {}
     except httpx.ReadTimeout:
+        ai_provider_request_end(duration_ms=(monotonic() - t_ai) * 1000, status="timeout", model=model, timed_out=True)
         logger.warning("Direct API read timed out (ReadTimeout) after %.1fs", NOYA_API_TIMEOUT)
         return "نویا این لحظه شلوغه و جواب نداد.", {}
     except httpx.TimeoutException:
+        ai_provider_request_end(duration_ms=(monotonic() - t_ai) * 1000, status="timeout", model=model, timed_out=True)
         logger.warning("Direct API timed out")
         return "نویا این لحظه شلوغه و جواب نداد.", {}
+    except httpx.HTTPStatusError as exc:
+        ai_provider_request_end(
+            duration_ms=(monotonic() - t_ai) * 1000,
+            status=f"http_{exc.response.status_code}", model=model,
+            http_status=exc.response.status_code,
+        )
+        logger.warning("Direct API HTTP error status=%s", exc.response.status_code)
+        return "خطا در ارتباط با نویا.", {}
     except Exception as exc:
+        ai_provider_request_end(duration_ms=(monotonic() - t_ai) * 1000, status="request_error", model=model)
         logger.warning("[NOYA-TIMING] ❌ Direct API failed: %s", type(exc).__name__)
         return "خطا در ارتباط با نویا.", {}
 

@@ -8,6 +8,7 @@ from django.test import SimpleTestCase
 from botapp.observability import context, metrics
 from botapp.observability.logging import JsonStdlibFormatter, RING, emit
 from botapp.observability.redaction import redact_value
+from botapp.observability import tracing
 
 
 class ObservabilityTests(SimpleTestCase):
@@ -50,3 +51,37 @@ class ObservabilityTests(SimpleTestCase):
             metrics.inc("noya.test.cardinality", label=str(i))
         snapshot = metrics.snapshot()
         self.assertLessEqual(len(snapshot["counters"]), 48)
+
+    def test_redacts_embedded_bearer_jwt_and_long_tokens(self):
+        value = "Bearer " + "a" * 40
+        jwt = "eyJ" + "a" * 8 + "." + "b" * 8 + "." + "c" * 8
+        cleaned = redact_value({"error": value + " " + jwt + " " + "f" * 64})
+        self.assertNotIn("Bearer", cleaned["error"])
+        self.assertNotIn(jwt, cleaned["error"])
+        self.assertNotIn("f" * 64, cleaned["error"])
+
+    def test_fallback_spans_are_unique_and_restore_context(self):
+        with tracing.start_span("stage"):
+            first = context.span_id_var.get()
+            with tracing.start_span("stage"):
+                second = context.span_id_var.get()
+            self.assertEqual(context.span_id_var.get(), first)
+        self.assertNotEqual(first, second)
+        self.assertEqual(context.span_id_var.get(), "")
+
+    def test_request_id_is_carried_in_snapshot(self):
+        context.bind(request_id="req-123")
+        self.assertEqual(context.snapshot()["request_id"], "req-123")
+
+    def test_malformed_sse_has_no_valid_chunks(self):
+        from botapp.agent.loop import _parse_sse_stream
+        self.assertIsNone(_parse_sse_stream("data: not-json\n\ndata: [DONE]\n"))
+
+    def test_provider_retry_and_timeout_metrics(self):
+        from botapp.observability.instrumentation import ai_provider_request_end
+        ai_provider_request_end(duration_ms=12, status="timeout", model="m", timed_out=True, retry=1)
+        snapshot = metrics.snapshot()
+        names = {x["name"] for x in snapshot["counters"]}
+        self.assertIn("noya.ai.provider_failures|kind=timeout,model=m", names)
+        self.assertIn("noya.ai.provider_timeouts|model=m", names)
+        self.assertIn("noya.ai.retries|model=m", names)

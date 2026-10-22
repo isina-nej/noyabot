@@ -9,7 +9,9 @@ from botapp.api import (
 )
 from botapp.views import healthcheck
 from botapp.ops_api import (
-    ops_dependencies, ops_diagnostic_run_detail, ops_diagnostics, ops_health, ops_live, ops_logs, ops_metrics, ops_ready, ops_runtime, ops_tests, ops_traces, ops_trace_detail,
+    ops_dependencies, ops_diagnostic_run_detail, ops_diagnostic_run_events, ops_diagnostic_run_report,
+    ops_diagnostics, ops_health, ops_live, ops_logs, ops_metrics, ops_ready, ops_runtime, ops_tests,
+    ops_traces, ops_trace_detail,
 )
 
 urlpatterns = [
@@ -25,8 +27,12 @@ urlpatterns = [
     path("api/internal/ops/v1/traces/<str:trace_id>/", ops_trace_detail, name="ops-trace-detail"),
     path("api/internal/ops/v1/diagnostics/", ops_diagnostics, name="ops-diagnostics"),
     path("api/internal/ops/v1/diagnostics/run/", ops_diagnostics, name="ops-diagnostics-run"),
+    path("api/internal/ops/v1/diagnostics/runs/", ops_diagnostics, name="ops-diagnostics-runs"),
     path("api/internal/ops/v1/diagnostics/runs/<str:run_id>/", ops_diagnostic_run_detail, name="ops-diagnostic-run-detail"),
+    path("api/internal/ops/v1/diagnostics/runs/<str:run_id>/events/", ops_diagnostic_run_events, name="ops-diagnostic-run-events"),
+    path("api/internal/ops/v1/diagnostics/runs/<str:run_id>/report/", ops_diagnostic_run_report, name="ops-diagnostic-run-report"),
     path("api/internal/ops/v1/tests/", ops_tests, name="ops-tests"),
+    path("api/internal/ops/v1/diagnostics/tests/", ops_tests, name="ops-diagnostics-tests"),
     path("api/groups/<str:chat_id>/settings/", group_settings_api, name="group-settings-api"),
     path("api/moderation/actions/", create_action_api, name="create-action-api"),
     path("api/moderation/actions/<int:action_id>/", action_detail_api, name="action-detail-api"),

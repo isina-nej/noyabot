@@ -2,26 +2,50 @@ name: noya-observability
 
 services:
   alloy:
+    profiles: [full]
     image: grafana/alloy:v1.4.2
-    command: ["run", "/etc/alloy/config.alloy"]
+    command: ["run", "--server.http.listen-addr=0.0.0.0:12345", "/etc/alloy/config.alloy"]
+    environment:
+      OPENOBSERVE_ADMIN_EMAIL: ${OPENOBSERVE_ADMIN_EMAIL:?set OPENOBSERVE_ADMIN_EMAIL}
+      OPENOBSERVE_ADMIN_PASSWORD: ${OPENOBSERVE_ADMIN_PASSWORD:?set OPENOBSERVE_ADMIN_PASSWORD}
     volumes:
       - ./alloy.alloy:/etc/alloy/config.alloy:ro
     ports:
       - "127.0.0.1:4318:4318"
+      - "127.0.0.1:12345:12345"
+    mem_limit: 256m
+    cpus: 0.50
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
     restart: unless-stopped
     depends_on:
       - openobserve
 
   openobserve:
+    profiles: [full]
     image: openobserve/openobserve:v0.14.0
     environment:
       ZO_ROOT_USER_EMAIL: ${OPENOBSERVE_ADMIN_EMAIL:?set OPENOBSERVE_ADMIN_EMAIL}
       ZO_ROOT_USER_PASSWORD: ${OPENOBSERVE_ADMIN_PASSWORD:?set OPENOBSERVE_ADMIN_PASSWORD}
       ZO_DATA_DIR: /data
+      ZO_COMPACT_DATA_RETENTION_DAYS: ${OPENOBSERVE_DATA_RETENTION_DAYS:-7}
+      ZO_COMPACT_FAST_MODE: ${OPENOBSERVE_COMPACT_FAST_MODE:-false}
+      ZO_MAX_FILE_SIZE_IN_MEMORY: ${OPENOBSERVE_MAX_FILE_SIZE_IN_MEMORY_MB:-128}
     volumes:
       - openobserve-data:/data
     ports:
       - "127.0.0.1:5080:5080"
+    mem_limit: 512m
+    cpus: 1.00
+    logging:
+      driver: json-file
+      options: {max-size: "10m", max-file: "3"}
+    healthcheck:
+      test: ["CMD", "wget", "-q", "-O", "/dev/null", "http://127.0.0.1:5080/healthz"]
+      interval: 30s
+      timeout: 5s
+      retries: 5
     restart: unless-stopped
 
 volumes:

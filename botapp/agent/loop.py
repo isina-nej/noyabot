@@ -9,10 +9,18 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import httpx
-from botapp.observability.instrumentation import instrument_async
+from botapp.observability.instrumentation import (
+    agent_tool_dispatch,
+    ai_provider_request_begin,
+    ai_provider_request_end,
+    ai_response_extracted,
+    ai_sse_malformed,
+    instrument_async,
+)
 
 from .registry import registry
 from .responses import sanitize_outgoing_text
@@ -50,6 +58,7 @@ def _parse_sse_stream(raw: str) -> dict | None:
     message: dict = {"role": "assistant", "content": ""}
     tool_calls_map: dict[int, dict] = {}
     reasoning_chars = 0
+    saw_valid_chunk = False
     for line in raw.split("\n"):
         line = line.strip()
         if not line.startswith("data: "):
@@ -64,6 +73,7 @@ def _parse_sse_stream(raw: str) -> dict | None:
         choices = chunk.get("choices", [])
         if not choices:
             continue
+        saw_valid_chunk = True
         delta = choices[0].get("delta", {})
         # content
         c = delta.get("content")
@@ -93,12 +103,33 @@ def _parse_sse_stream(raw: str) -> dict | None:
             if tc_delta.get("id"):
                 tc["id"] = tc_delta["id"]
 
+    if not saw_valid_chunk:
+        return None
     if tool_calls_map:
         message["tool_calls"] = [tool_calls_map[i] for i in sorted(tool_calls_map)]
     return {
         "choices": [{"message": message, "finish_reason": "stop"}],
         "reasoning_chars": reasoning_chars,
     }
+
+
+async def _dispatch_observed(tool_name: str, args: dict):
+    started = time.perf_counter()
+    try:
+        result = await registry.dispatch_async(tool_name, args)
+    except Exception:
+        agent_tool_dispatch(
+            tool=tool_name,
+            duration_ms=(time.perf_counter() - started) * 1000,
+            status="error",
+        )
+        raise
+    agent_tool_dispatch(
+        tool=tool_name,
+        duration_ms=(time.perf_counter() - started) * 1000,
+        status="ok",
+    )
+    return result
 
 
 @instrument_async("agent.loop")
@@ -171,27 +202,44 @@ async def run_agent_loop(
         # Send request with explicit stream=false, but parse SSE anyway
         # because some 9Router combos always return SSE
         payload["stream"] = False
+        request_started = time.perf_counter()
+        ai_provider_request_begin(tool_model)
         async with httpx.AsyncClient(timeout=120) as client:
             try:
                 resp = await client.post(api_url, json=payload, headers=headers)
                 resp.raise_for_status()
             except httpx.ReadTimeout as e:
+                ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
+                                        status="timeout", model=tool_model, timed_out=True)
                 logger.warning(f"[NOYA-AGENT] Read timeout from AI provider: {type(e).__name__}")
                 return "پاسخ هوش مصنوعی زمان‌بر شد (تایم‌اوت). لطفاً دوباره تلاش کنید.", metadata
             except httpx.TimeoutException as e:
+                ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
+                                        status="timeout", model=tool_model, timed_out=True)
                 logger.warning(f"[NOYA-AGENT] Timeout contacting AI provider: {type(e).__name__}")
                 return "خطا در اتصال به هوش مصنوعی (تایم‌اوت).", metadata
             except httpx.HTTPStatusError as e:
+                ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
+                                        status=f"http_{e.response.status_code}", model=tool_model,
+                                        http_status=e.response.status_code)
                 logger.warning(f"[NOYA-AGENT] API error status: {e.response.status_code}")
                 return f"خطا در ارتباط با هوش مصنوعی ({e.response.status_code})", metadata
             except httpx.RequestError as e:
+                ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
+                                        status="request_error", model=tool_model)
                 logger.warning(f"[NOYA-AGENT] Request error: {type(e).__name__}")
                 return "خطا در اتصال به هوش مصنوعی.", metadata
 
         text = (resp.text or "").strip()
         if not text:
+            ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
+                                    status="malformed", model=tool_model,
+                                    http_status=resp.status_code)
             logger.warning("[NOYA-AGENT] Empty response body from AI provider (status=%s)", resp.status_code)
             return "پاسخی از هوش مصنوعی دریافت نشد.", metadata
+
+        ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
+                                status="ok", model=tool_model, http_status=resp.status_code)
 
         # ── Parse response: try JSON first, then SSE stream ──
         try:
@@ -200,6 +248,7 @@ async def run_agent_loop(
             # SSE stream format: "data: {json}\n\ndata: {json}\n\n..."
             data = _parse_sse_stream(text)
             if not data:
+                ai_sse_malformed(api_url)
                 logger.error(f"[NOYA-AGENT] Empty/unparseable response: {text[:200]}")
                 return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
 
@@ -217,6 +266,10 @@ async def run_agent_loop(
         # Only ``message.content`` may become user-visible text — a JSON (non
         # SSE) response can carry ``reasoning_content`` too, and it is ignored.
         raw_content = msg.get("content") or ""
+        ai_response_extracted(
+            content_chars=len(raw_content) if isinstance(raw_content, str) else 0,
+            reasoning_chars=int(reasoning_chars or 0),
+        )
 
         # ── No tool calls → done ──
         tool_calls = msg.get("tool_calls")
@@ -266,7 +319,7 @@ async def run_agent_loop(
                 else:
                     seen_search_queries.add(q)
                     search_count += 1
-                    result = await registry.dispatch_async(tool_name, args)
+                    result = await _dispatch_observed(tool_name, args)
             elif tool_name == "fetch_url":
                 from botapp.web.ranking import canonicalize_url
                 u = canonicalize_url(args.get("url") or "")
@@ -277,7 +330,7 @@ async def run_agent_loop(
                 else:
                     seen_fetch_urls.add(u)
                     fetch_count += 1
-                    result = await registry.dispatch_async(tool_name, args)
+                    result = await _dispatch_observed(tool_name, args)
             elif tool_name in (
                 "research.social_search", "x.search_posts", "x.get_post",
                 "x.get_thread", "x.get_user", "x.get_user_posts",
@@ -297,9 +350,9 @@ async def run_agent_loop(
                 else:
                     seen_research_queries.add(q)
                     research_count += 1
-                    result = await registry.dispatch_async(tool_name, args)
+                    result = await _dispatch_observed(tool_name, args)
             else:
-                result = await registry.dispatch_async(tool_name, args)
+                result = await _dispatch_observed(tool_name, args)
 
             used_tools.append(tool_name)
 

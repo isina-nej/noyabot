@@ -1,6 +1,7 @@
 [Unit]
 Description=Noya internal observability API (Django ASGI)
-After=network.target
+After=network-online.target
+Wants=network-online.target
 
 [Service]
 User=noya
@@ -8,8 +9,15 @@ WorkingDirectory=/opt/noyabot
 EnvironmentFile=/opt/noyabot/.env
 ExecStart=/opt/noyabot/.venv/bin/gunicorn config.asgi:application --worker-class uvicorn.workers.UvicornWorker --bind 127.0.0.1:8000 --workers 2
 Restart=on-failure
+RestartSec=5s
+UMask=0077
 NoNewPrivileges=true
 PrivateTmp=true
+ProtectHome=read-only
+MemoryMax=512M
+CPUQuota=100%
+LimitNOFILE=4096
+TimeoutStopSec=30s
 
 [Install]
 WantedBy=multi-user.target
