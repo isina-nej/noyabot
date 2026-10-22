@@ -140,7 +140,7 @@ def summarize_live_journal(raw: str) -> dict:
         if "HTTP Request: POST " in line and "/v1/chat/completions" in line:
             summary["ai_requests_observed"] += 1
             # Return only a three-digit HTTP status code, never the URL.
-            match = re.search(r'HTTP/[0-9.]+\\s+(\\d{3})\\b', line)
+            match = re.search(r'HTTP/[0-9.]+\s+(\d{3})\b', line)
             if match:
                 code = match.group(1)
                 counts = summary["provider_http_status_counts"]
@@ -148,7 +148,7 @@ def summarize_live_journal(raw: str) -> dict:
         if "[NOYA-TIMING]" in line and "Telegram reply finished" in line:
             summary["telegram_replies_observed"] += 1
         if "Agent loop done in " in line:
-            match = re.search(r'Agent loop done in (\\d+(?:\\.\\d+)?)ms', line)
+            match = re.search(r'Agent loop done in (\d+(?:\.\d+)?)ms', line)
             if match:
                 durations.append(float(match.group(1)))
     if durations:
