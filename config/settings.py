@@ -168,13 +168,14 @@ LOGGING = {
         },
     },
     "handlers": {
+        "ops_store": {"class": "botapp.observability.logging.SafeOpsStoreHandler", "level": "WARNING"},
         "console": {
             "class": "logging.StreamHandler",
             "formatter": "json_safe",
         },
     },
     "root": {
-        "handlers": ["console"],
+        "handlers": ["console", "ops_store"],
         "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
     },
     "loggers": {
