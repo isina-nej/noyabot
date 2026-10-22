@@ -15,6 +15,7 @@ import httpx
 
 from .registry import registry
 from .responses import sanitize_outgoing_text
+from .model_runtime import current_turn, ensure_model_first_tools, skill_catalog_prompt
 
 logger = logging.getLogger(__name__)
 
@@ -109,6 +110,8 @@ async def run_agent_loop(
     speaker_user_id: int | None = None,
     speaker_name: str = "",
     on_token=None,
+    images: list[dict] | None = None,
+    model_first: bool = False,
 ) -> tuple[str, dict]:
     """Run the Hermes-style agent loop.
 
@@ -126,7 +129,14 @@ async def run_agent_loop(
     # Chat loop sees only the chat catalog (conversational + read-only
     # research tools). The admin catalog shares this registry but is
     # never offered to the chat model.
+    if model_first:
+        ensure_model_first_tools()
     tools = registry.chat_definitions()
+    if model_first:
+        # Advertise actual registered capabilities, never unavailable video/admin tools.
+        system_prompt = f"{system_prompt}{skill_catalog_prompt()}"
+    if current_turn() is None:
+        tools = [tool for tool in tools if tool["function"]["name"] not in ("telegram_progress", "edit_image")]
 
     messages: list[dict[str, Any]] = []
     if system_prompt:
@@ -141,7 +151,14 @@ async def run_agent_loop(
         messages.append({"role": "system", "content": system_prompt})
     if conversation_history:
         messages.extend(conversation_history)
-    messages.append({"role": "user", "content": question})
+    if images:
+        from botapp.telegram_media import images_to_data_urls
+        content = [{"type": "text", "text": question}]
+        for url in images_to_data_urls(images[:3]):
+            content.append({"type": "image_url", "image_url": {"url": url}})
+        messages.append({"role": "user", "content": content})
+    else:
+        messages.append({"role": "user", "content": question})
 
     metadata: dict[str, Any] = {}
     used_tools: list[str] = []
@@ -151,11 +168,14 @@ async def run_agent_loop(
     search_count = 0
     fetch_count = 0
     research_count = 0
+    total_tool_calls = 0
+    max_tool_calls = max(1, min(int(os.getenv("NOYA_MAX_TOOL_CALLS", "12")), 30))
+    max_iterations = max(1, min(int(os.getenv("NOYA_MAX_AGENT_ITERATIONS", str(MAX_ITERATIONS))), 20))
     MAX_SEARCHES = 3
     MAX_FETCHES = 6
     MAX_RESEARCH_CALLS = 4
 
-    for iteration in range(MAX_ITERATIONS):
+    for iteration in range(max_iterations):
         payload: dict[str, Any] = {
             "model": tool_model,
             "messages": messages,
@@ -219,6 +239,9 @@ async def run_agent_loop(
         # ── No tool calls → done ──
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
+            if finish in ("length", "max_tokens"):
+                metadata["incomplete"] = True
+                return "پاسخ کامل نشد؛ لطفاً درخواست را دوباره امتحان کن.", metadata
             final_text = sanitize_outgoing_text(raw_content)
             if not final_text:
                 # Never fall back to the raw text: it may be nothing but an
@@ -244,6 +267,7 @@ async def run_agent_loop(
         })
 
         for tc in tool_calls:
+            total_tool_calls += 1
             fn = tc.get("function", {})
             tool_name = fn.get("name", "")
             try:
@@ -251,10 +275,12 @@ async def run_agent_loop(
             except json.JSONDecodeError:
                 args = {}
 
-            logger.info(f"[NOYA-AGENT] 🔧 Calling tool: {tool_name}({args})")
+            logger.info("[NOYA-AGENT] 🔧 Calling tool: %s (iteration=%s)", tool_name, iteration + 1)
 
             # ── Loop & Budget Deduplication Guards ──
-            if tool_name == "web_search":
+            if total_tool_calls > max_tool_calls:
+                result = "Tool budget exhausted. Provide the final answer from existing evidence."
+            elif tool_name == "web_search":
                 raw_q = (args.get("query") or "").strip()
                 q = re.sub(r"\s+", " ", raw_q).casefold()
                 if q in seen_search_queries:
@@ -303,10 +329,20 @@ async def run_agent_loop(
 
             # ── Handle special results via cache ──
             from botapp.agent.tools import _IMAGE_RESULT_CACHE, _TTS_RESULT_CACHE
-            if tool_name == "generate_image" and _IMAGE_RESULT_CACHE.get("last"):
-                metadata["generated_image_b64"] = _IMAGE_RESULT_CACHE.pop("last")
-            if tool_name == "text_to_speech" and _TTS_RESULT_CACHE.get("last"):
-                metadata["generated_tts_audio"] = _TTS_RESULT_CACHE.pop("last")
+            turn = current_turn()
+            if turn is not None:
+                if turn.image_result is not None:
+                    import base64
+                    metadata["generated_image_b64"] = base64.b64encode(turn.image_result).decode("ascii")
+                    turn.image_result = None
+                if turn.audio_result is not None:
+                    metadata["generated_tts_audio"] = turn.audio_result
+                    turn.audio_result = None
+            else:
+                if tool_name == "generate_image" and _IMAGE_RESULT_CACHE.get("last"):
+                    metadata["generated_image_b64"] = _IMAGE_RESULT_CACHE.pop("last")
+                if tool_name == "text_to_speech" and _TTS_RESULT_CACHE.get("last"):
+                    metadata["generated_tts_audio"] = _TTS_RESULT_CACHE.pop("last")
 
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": str(result)[:4000]})
 
