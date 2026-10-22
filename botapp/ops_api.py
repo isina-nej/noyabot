@@ -86,6 +86,7 @@ def ops_health(request):
     return _response({"status": "ok" if ok else "degraded", "checks": {
         "database": {"ok": ok, "error_type": error or None},
         "bot_worker": store.read_heartbeat(),
+        "diagnostics_worker": store.read_heartbeat("diagnostics-worker"),
     }})
 
 
