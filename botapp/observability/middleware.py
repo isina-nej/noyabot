@@ -6,7 +6,7 @@ import uuid
 
 from aiogram import BaseMiddleware
 
-from . import context, logging as obs_logging, metrics
+from . import context, logging as obs_logging, metrics, tracing
 
 
 class TelegramMiddleware(BaseMiddleware):
@@ -31,7 +31,8 @@ class TelegramMiddleware(BaseMiddleware):
             metrics.inc(metrics.TELEGRAM_UPDATES_RECEIVED)
             started = time.perf_counter()
             try:
-                result = await handler(event, data)
+                with tracing.start_span("telegram.update.received", operation="telegram"):
+                    result = await handler(event, data)
             except Exception as exc:
                 metrics.inc(metrics.TELEGRAM_HANDLER_FAILURES, kind=type(exc).__name__)
                 obs_logging.emit("telegram.update.failed", level="error", error_type=type(exc).__name__)
@@ -56,7 +57,8 @@ class DjangoObservabilityMiddleware:
         started = time.perf_counter()
         try:
             context.bind(operation=f"http.{request.method.lower()}")
-            response = self.get_response(request)
+            with tracing.start_span("http.request", method=request.method):
+                response = self.get_response(request)
             metrics.observe("noya.http.request_latency_ms", (time.perf_counter() - started) * 1000,
                             method=request.method, status=getattr(response, "status_code", 0))
             return response
