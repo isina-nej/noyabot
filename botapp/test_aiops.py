@@ -11,6 +11,25 @@ from noyaops import aiops
 
 
 class AIOpsSafetyTests(SimpleTestCase):
+    def test_live_journal_summary_never_exposes_private_message_text(self):
+        raw = (
+            "[NOYA-AGENT] Iteration 1 model=noya tools=18\n"
+            '[httpx] HTTP Request: POST http://127.0.0.1:20128/v1/chat/completions "HTTP/1.1 200 OK"\n'
+            "[NOYA-TIMING] Agent loop done in 9534.5ms tools=[]\n"
+            "[NOYA-TIMING] Telegram reply finished for msg_id=92837\n"
+            "[NOYA-TIMING] Incoming chat msg_id=92837 chat_id=-1003861069387: private-message-body\n"
+            "Authorization: Bearer very-private-token\n"
+        )
+        result = aiops.summarize_live_journal(raw)
+        encoded = json.dumps(result)
+        self.assertEqual(result["agent_iterations"], 1)
+        self.assertEqual(result["ai_requests_observed"], 1)
+        self.assertEqual(result["telegram_replies_observed"], 1)
+        self.assertEqual(result["provider_http_status_counts"], {"200": 1})
+        self.assertEqual(result["agent_latency_ms"]["max"], 9534.5)
+        for leaked in ("private-message-body", "very-private-token", "-1003861069387", "92837"):
+            self.assertNotIn(leaked, encoded)
+
     def test_remote_url_is_pinned_to_github(self):
         with patch("noyaops.aiops._cmd") as cmd:
             answer = aiops._remote_heads("http://localhost/secrets")
