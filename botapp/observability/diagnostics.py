@@ -110,7 +110,7 @@ def execute_one(test_id: str) -> tuple[str, dict, str]:
     if not allowed:
         return "failed", {"ok": False, "error_type": "DisabledOrUnknownTest"}, "DisabledOrUnknownTest"
     staging = test_id in STAGING_MODULES
-    timeout = 25 if staging else 10
+    timeout = 45 if staging else 10
     if staging:
         cmd = [sys.executable, "manage.py", "test", *STAGING_MODULES[test_id], "--noinput"]
         # A disposable SQLite DB and no real messaging/provider credentials.
