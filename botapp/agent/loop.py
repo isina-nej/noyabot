@@ -169,6 +169,7 @@ async def run_agent_loop(
     fetch_count = 0
     research_count = 0
     total_tool_calls = 0
+    loaded_skills: set[str] = set()
     max_tool_calls = max(1, min(int(os.getenv("NOYA_MAX_TOOL_CALLS", "12")), 30))
     max_iterations = max(1, min(int(os.getenv("NOYA_MAX_AGENT_ITERATIONS", str(MAX_ITERATIONS))), 20))
     MAX_SEARCHES = 3
@@ -278,8 +279,29 @@ async def run_agent_loop(
             logger.info("[NOYA-AGENT] 🔧 Calling tool: %s (iteration=%s)", tool_name, iteration + 1)
 
             # ── Loop & Budget Deduplication Guards ──
+            required_skill = None
+            if model_first:
+                if tool_name in ("web_search", "fetch_url"):
+                    required_skill = "web-research"
+                elif tool_name.startswith(("x.", "youtube.", "research.")):
+                    required_skill = "social-research"
+                elif tool_name in ("generate_image", "edit_image"):
+                    required_skill = "image-workflow"
+                elif tool_name == "text_to_speech":
+                    required_skill = "voice-workflow"
+                elif tool_name == "telegram_progress":
+                    required_skill = "conversation"
             if total_tool_calls > max_tool_calls:
                 result = "Tool budget exhausted. Provide the final answer from existing evidence."
+            elif required_skill and required_skill not in loaded_skills:
+                result = (
+                    f"Load skill '{required_skill}' using load_skill first, then "
+                    "retry this tool. No external action was executed."
+                )
+            elif tool_name == "load_skill":
+                result = await registry.dispatch_async(tool_name, args)
+                if isinstance(args, dict) and args.get("name") and not str(result).startswith("Skill unavailable"):
+                    loaded_skills.add(str(args["name"]))
             elif tool_name == "web_search":
                 raw_q = (args.get("query") or "").strip()
                 q = re.sub(r"\s+", " ", raw_q).casefold()
