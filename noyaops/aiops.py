@@ -231,6 +231,7 @@ def _agent_environment():
                "TERM", "HTTPS_PROXY", "HTTP_PROXY", "NO_PROXY", "CODEX_HOME")
     env = {k: os.environ[k] for k in allowed if k in os.environ}
     env.update({
+        "GIT_TERMINAL_PROMPT": "0",
         "DJANGO_SETTINGS_MODULE": "config.settings",
         "DB_ENGINE": "django.db.backends.sqlite3",
         "DB_NAME": ":memory:",
@@ -289,7 +290,8 @@ def run_agent(*, mode, request, snapshot, repository=DEFAULT_REPOSITORY,
         "workspace": str(job), "branch": branch, "base": base,
         "mode": mode, "production_unchanged": True,
     }
-    snap_path = job / ".noya-aiops-snapshot.json"
+    # Use Git metadata directory for operator-only reports, never tracked by Git.
+    snap_path = job / ".git" / "noya-aiops-snapshot.json"
     snap_path.write_text(json.dumps(snapshot, ensure_ascii=False, indent=2),
                          encoding="utf-8")
     snap_path.chmod(0o600)
@@ -305,7 +307,7 @@ def run_agent(*, mode, request, snapshot, repository=DEFAULT_REPOSITORY,
         "with SQLite only. Do not use actual bot/model credentials. "
         "Provide concise evidence and explain incomplete coverage.\n"
         f"Mode: {mode}. Operator request: {request}\n"
-        "Scrubbed telemetry and version snapshot: .noya-aiops-snapshot.json"
+        "Scrubbed telemetry and version snapshot: .git/noya-aiops-snapshot.json"
     )
     p = _cmd(["codex", "exec", "--sandbox",
               ("workspace-write" if mode == "repair" else "read-only"),
@@ -313,11 +315,12 @@ def run_agent(*, mode, request, snapshot, repository=DEFAULT_REPOSITORY,
              cwd=str(job), timeout=600, env=_agent_environment())
     report["agent_exit_code"] = p.returncode
     # Never include unrestricted Codex stdout in operator API logs.
-    report["agent_output_saved"] = str(job / ".noya-aiops-agent-report.txt")
-    report_path = job / ".noya-aiops-agent-report.txt"
+    report["agent_output_saved"] = str(job / ".git" / "noya-aiops-agent-report.txt")
+    report_path = job / ".git" / "noya-aiops-agent-report.txt"
     report_path.write_text((p.stdout + "\n" + p.stderr)[-120_000:], encoding="utf-8")
     report_path.chmod(0o600)
-    report["changed_files"] = (_git(job, "diff", "--name-only") or "").splitlines()
+    # Include untracked files in the reported diff overview, not their contents.
+    report["changed_files"] = (_git(job, "status", "--short") or "").splitlines()
     report["commit"] = _git(job, "rev-parse", "HEAD")
     report["checks"] = []
     if mode == "repair" and p.returncode == 0:
@@ -349,6 +352,8 @@ def _parse_args(argv=None):
         mode.add_argument("--base", choices=("main", DEFAULT_REPAIR_BASE),
                           default=DEFAULT_REPAIR_BASE)
         mode.add_argument("--workspace-parent", default=WORKSPACE_PARENT)
+        mode.add_argument("--snapshot-file", default="",
+                          help="Pre-exported, scrubbed snapshot from privileged operator; no Ops tokens shared")
     return p.parse_args(argv)
 
 
@@ -358,7 +363,18 @@ def main(argv=None):
         if args.command == "test":
             result = run_diagnostic(args.test_id)
         else:
-            snapshot = collect_snapshot(remote=not getattr(args, "offline", False))
+            if args.command in ("diagnose", "repair") and args.snapshot_file:
+                path = Path(args.snapshot_file)
+                if not path.is_file() or path.stat().st_size > 250000:
+                    raise AgentOpsError("invalid or oversized scrubbed snapshot")
+                try:
+                    snapshot = json.loads(path.read_text(encoding="utf-8"))
+                except (OSError, ValueError) as exc:
+                    raise AgentOpsError("cannot parse scrubbed snapshot") from exc
+                if not isinstance(snapshot, dict) or snapshot.get("privacy", "").find("NO prompts") < 0:
+                    raise AgentOpsError("snapshot is not a Noya redacted operator snapshot")
+            else:
+                snapshot = collect_snapshot(remote=not getattr(args, "offline", False))
             if args.command == "snapshot":
                 result = snapshot
             else:
