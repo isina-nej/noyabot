@@ -188,12 +188,17 @@ class JsonStdlibFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload = _base_fields()
-        payload["event"] = record.getMessage().split(" ", 1)[0][:80]
+        # Avoid deriving event names from the first word of user-provided
+        # text: even a single raw word may be private conversation content.
+        payload["event"] = (record.name.replace(".", "_") + ".log")[:80]
         try:
             maybe = json.loads(record.getMessage())
             if isinstance(maybe, dict):
-                payload.update({k: v for k, v in maybe.items() if k != "event"})
-                payload["event"] = str(maybe.get("event") or payload["event"])
+                unsafe = {"message", "body", "text", "content", "prompt", "reasoning",
+                          "thinking", "user_id", "chat_id", "telegram_update_id",
+                          "message_id", "request_headers"}
+                payload.update({k: v for k, v in maybe.items() if k not in unsafe and k != "event"})
+                payload["event"] = str(maybe.get("event") or payload["event"])[:80]
         except Exception:
             # Arbitrary legacy logger messages may contain Telegram text,
             # provider payloads or secrets. Never export their raw contents.
