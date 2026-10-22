@@ -77,6 +77,9 @@ Read the report before using it with an external coding model. It includes:
 - Ops review SHA and reachable remote `main`/feature HEAD SHAs;
 - Ops API health, bot/worker heartbeats, bounded **redacted** events and
   per-HTTP-process metrics;
+- aggregate metrics extracted from the running bot's last 300 journald lines
+  (known HTTP status codes, Agent iteration counts, reply counts and numeric
+  latencies only; original log lines are **not** sent to the AI);
 - explicit gaps such as `real_telegram_bot_not_emitting_ops_heartbeat`.
 
 It **cannot** prove the exact loaded Python bytecode SHA from a running process
