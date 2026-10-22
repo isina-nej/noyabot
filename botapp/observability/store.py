@@ -19,14 +19,11 @@ from .redaction import redact_value
 
 
 def db_path() -> Path:
-    root = Path(os.getenv("NOYA_OPS_STATE_DIR", str(Path.home() / ".local/state/noyaops"))).expanduser()
+    location = os.getenv("NOYA_OPS_STATE_DIR", "").strip() or str(Path.home() / ".local/state/noyaops")
+    root = Path(location).expanduser()
     root.mkdir(parents=True, exist_ok=True, mode=0o700)
     if root.is_symlink():
         raise RuntimeError("ops state root must not be a symlink")
-    try:
-        root.chmod(0o700)
-    except OSError:
-        pass
     return root / "ops.sqlite3"
 
 
