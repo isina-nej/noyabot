@@ -90,7 +90,7 @@ def _repo_state(path):
 
 
 def _remote_heads(url: str):
-    if not re.fullmatch(r"https://github\\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\\.git", url):
+    if not re.fullmatch(r"https://github\.com/[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+\.git", url):
         return {"available": False, "reason": "unsupported_repository_url"}
     p = _cmd(["git", "ls-remote", "--heads", url,
               "refs/heads/main", f"refs/heads/{DEFAULT_REPAIR_BASE}"],
