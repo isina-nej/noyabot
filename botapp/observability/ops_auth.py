@@ -14,6 +14,8 @@ import time
 from collections import defaultdict, deque
 from functools import wraps
 
+from django.views.decorators.csrf import csrf_exempt
+
 from django.http import JsonResponse
 from django.middleware.csrf import CsrfViewMiddleware
 
@@ -66,6 +68,7 @@ def ops_authenticated(view):
     A Django superuser session is also allowed, but CSRF remains mandatory
     for POST. Staff users and moderation API keys are *not* ops administrators.
     """
+    @csrf_exempt
     @wraps(view)
     def wrapped(request, *args, **kwargs):
         scope = "run" if request.method not in ("GET", "HEAD", "OPTIONS") else "read"
