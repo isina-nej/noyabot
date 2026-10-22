@@ -131,6 +131,14 @@ def emit(event: str, *, level: str = "info", logger_name: str = "botapp.observab
         clean = {"redaction_error": True}
     payload.update(clean)
     RING.append(payload)
+    # The Django HTTP process and the Telegram polling process do not share
+    # RAM; keep bounded redacted logs in their shared private ops store.
+    if os.getenv('NOYA_OPS_PERSIST_LOGS', 'true').lower() in ('true', '1', 'yes', 'on'):
+        try:
+            from .store import record_event
+            record_event(payload)
+        except Exception:
+            pass  # telemetry must not interrupt application work
     std_logger = logging.getLogger(logger_name or "botapp.observability")
     record = logging.LogRecord(
         name=logger_name or "botapp.observability",
@@ -161,10 +169,12 @@ class JsonStdlibFormatter(logging.Formatter):
                 payload.update({k: v for k, v in maybe.items() if k != "event"})
                 payload["event"] = str(maybe.get("event") or payload["event"])
         except Exception:
-            payload["message"] = record.getMessage()[:500]
+            # Arbitrary legacy logger messages may contain Telegram text,
+            # provider payloads or secrets. Never export their raw contents.
+            payload["message"] = "[UNSTRUCTURED_MESSAGE_REDACTED]"
         payload["level"] = record.levelname.casefold()
         payload["logger"] = record.name
-        return json.dumps(payload, default=str, ensure_ascii=False)
+        return json.dumps(redact_value(payload), default=str, ensure_ascii=False)
 
 
 def apply_structlog_config() -> None:
