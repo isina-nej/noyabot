@@ -7,6 +7,7 @@ diagnostic worker share NOYA_OPS_STATE_DIR on the same host.
 from __future__ import annotations
 
 import json
+from contextlib import contextmanager
 import os
 from pathlib import Path
 import secrets
@@ -29,6 +30,7 @@ def db_path() -> Path:
     return root / "ops.sqlite3"
 
 
+@contextmanager
 def _connect():
     path = db_path()
     conn = sqlite3.connect(str(path), timeout=5)
@@ -71,7 +73,14 @@ def _connect():
         os.chmod(path, 0o600)
     except OSError:
         pass
-    return conn
+    try:
+        yield conn
+        conn.commit()
+    except BaseException:
+        conn.rollback()
+        raise
+    finally:
+        conn.close()
 
 
 def record_event(entry: dict) -> bool:
