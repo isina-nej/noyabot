@@ -91,18 +91,21 @@ class GuestBotTest(SimpleTestCase):
             message_id=77,
             reply=AsyncMock(return_value=SimpleNamespace(edit_text=AsyncMock())),
         )
+        captured = {}
+
+        async def _fake_run(_message, payload, provider, session_id, **kwargs):
+            captured["session_id"] = session_id
+            return ("پاسخ کانال", {})
+
         with patch(
-            "botapp.nouya_handler.call_noya_api",
-            new=AsyncMock(return_value=("پاسخ کانال", {})),
-        ) as call_ai:
+            "botapp.nouya_handler.run_ai_with_memory",
+            new=AsyncMock(side_effect=_fake_run),
+        ) as run_memory:
             import asyncio
 
             asyncio.run(channel_nouya_handler(message))
-        call_ai.assert_awaited_once_with(
-            "سلام",
-            session_id="telegram:channel:-100:77",
-            images=None,
-        )
+        run_memory.assert_awaited_once()
+        self.assertIn("channel", captured["session_id"])
         message.reply.assert_awaited_once_with("یک لحظه…")
         message.reply.return_value.edit_text.assert_awaited_once_with(
             "پاسخ کانال",

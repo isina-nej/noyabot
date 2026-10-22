@@ -1,3 +1,4 @@
+import logging
 import random
 import re
 
@@ -6,6 +7,13 @@ from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
 
+from botapp.channel_insights import (
+    ChannelInsightUnavailable,
+    analysis_limit_from_text as analysis_limit_from_input,
+    build_analysis_prompt,
+    fetch_channel_digest,
+    wants_channel_analysis,
+)
 from botapp.memory.integration import run_ai_with_memory
 from botapp.noya_bot_chat import (
     allow_bot_to_bot_reply,
@@ -17,10 +25,40 @@ from botapp.services import call_noya_api
 from botapp.telegram_media import collect_noya_images
 from botapp.telegram_rich import extract_message_body
 
+logger = logging.getLogger(__name__)
+
 router = Router()
+
+TELEGRAM_TEXT_LIMIT = 4096
+
+
+def split_telegram_text(text: str, limit: int = TELEGRAM_TEXT_LIMIT) -> list[str]:
+    """Split long text into ≤ *limit* chunks at line boundaries when possible."""
+    body = (text or "").strip()
+    if len(body) <= limit:
+        return [body] if body else []
+    chunks: list[str] = []
+    while len(body) > limit:
+        window = body[:limit]
+        # Prefer breaking at the last paragraph, then last line, then whitespace.
+        cut = window.rfind("\n\n")
+        if cut < limit // 2:
+            cut = window.rfind("\n")
+        if cut < limit // 2:
+            cut = window.rfind(" ")
+        if cut < limit // 2:
+            cut = limit
+        chunks.append(body[:cut].rstrip())
+        body = body[cut:].lstrip()
+    if body:
+        chunks.append(body)
+    return chunks
 
 # Persian-aware word boundary around «نویا».
 _NOYA_NAME_RE = re.compile(r"(?<![\wآ-ی])نویا(?![\wآ-ی])", re.IGNORECASE)
+_NOYA_LATIN_NAME_RE = re.compile(
+    r"(?<![\w])(?:noya|nuya|noia|nuia)(?![\w])", re.IGNORECASE
+)
 _AI_PREFIX_RE = re.compile(r"^(?:نویا|noya|nuya|noia|nuia)(?:\s|\u200c)", re.IGNORECASE)
 
 
@@ -51,33 +89,79 @@ def _channel_question(text: str, bot_username: str = "") -> str | None:
         bot_username
         and re.search(rf"@{re.escape(bot_username)}\b", text, flags=re.IGNORECASE)
     )
-    name_call = bool(_NOYA_NAME_RE.search(text))
+    name_call = bool(
+        _NOYA_NAME_RE.search(text) or _NOYA_LATIN_NAME_RE.search(text)
+    )
     if not (mention or name_call):
         return None
     if bot_username:
         text = re.sub(rf"@{re.escape(bot_username)}\b", "", text, flags=re.IGNORECASE)
     text = _NOYA_NAME_RE.sub("", text)
+    text = _NOYA_LATIN_NAME_RE.sub("", text)
     return text.strip() or "به این پست پاسخ بده."
+
+
+async def _send_channel_answer(location: types.Message, answer: str) -> None:
+    """Edit/reply with the final answer; falls back to plain text on HTML errors."""
+    body = (answer or "").strip()
+    if not body:
+        body = "…"
+    try:
+        await location.edit_text(body, parse_mode="HTML")
+    except TelegramBadRequest:
+        await location.edit_text("…")
+        # Re-send in plain chunks so message-length / parse errors never eat
+        # the whole answer silently.
+        for chunk in split_telegram_text(body):
+            try:
+                await location.reply(chunk)
+            except TelegramBadRequest as plain_error:
+                logger.warning(
+                    "channel_analysis_send_failed chat=%s error=%s",
+                    getattr(getattr(location, "chat", None), "id", None),
+                    type(plain_error).__name__,
+                )
+                await location.reply("پاسخ آماده شد ولی ارسالش ممکن نشد؛ دوباره امتحان کن.")
 
 
 @router.channel_post(F.text | F.caption | F.rich_message)
 async def channel_nouya_handler(message: types.Message):
+    """Channel «نویا» post — exactly the group pipeline, plus MTProto analysis."""
     bot_user = await message.bot.get_me()
     body = extract_message_body(message)
     question = _channel_question(body, bot_user.username or "")
     if question is None:
         return
     images = await collect_noya_images(message.bot, message)
+
+    # ── Channel-wide analysis via MTProto («نویا تحلیل …») ──
+    if wants_channel_analysis(question):
+        limit = analysis_limit_from_input(question)
+        progress = await message.reply("دارم تاریخچهٔ کانال می‌خونم… چند دقیقه صبر کن ✍️")
+        try:
+            digest = await fetch_channel_digest(int(message.chat.id), limit)
+        except ChannelInsightUnavailable as unavailable:
+            await _send_channel_answer(progress, unavailable.user_message())
+            return
+        prompt = build_analysis_prompt(digest, question)
+        answer, _meta = await call_noya_api(
+            prompt,
+            session_id=f"telegram:channel-analysis:{message.chat.id}:{message.message_id}",
+            images=None,
+        )
+        await _send_channel_answer(progress, answer)
+        return
+
+    payload = build_noya_user_payload(message, question, bot_username=bot_user.username or "")
     progress = await message.reply("یک لحظه…")
-    answer, _meta = await call_noya_api(
-        question,
+    answer, _meta = await run_ai_with_memory(
+        message,
+        payload,
+        call_noya_api,
         session_id=f"telegram:channel:{message.chat.id}:{message.message_id}",
         images=images or None,
     )
-    try:
-        await progress.edit_text(answer, parse_mode="HTML")
-    except TelegramBadRequest:
-        await progress.edit_text(answer)
+    await _send_channel_answer(progress, answer)
 
 
 @router.guest_message()
