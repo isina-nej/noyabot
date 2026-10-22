@@ -161,6 +161,7 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
+        "json_safe": {"()": "botapp.observability.logging.JsonStdlibFormatter"},
         "timed": {
             "format": "[%(asctime)s.%(msecs)03d] [%(levelname)s] [%(name)s] %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
@@ -169,7 +170,7 @@ LOGGING = {
     "handlers": {
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "timed",
+            "formatter": "json_safe",
         },
     },
     "root": {
