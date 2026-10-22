@@ -114,6 +114,64 @@ def _systemd(unit: str):
     return dict(line.split("=", 1) for line in p.stdout.splitlines() if "=" in line)
 
 
+def summarize_live_journal(raw: str) -> dict:
+    """Aggregate real production journal metadata; NEVER return raw messages.
+
+    The live bot's old logger contains private Telegram IDs, names, prompts,
+    answers and provider data.  Counts and bounded numeric timings only.
+    No substring of an untrusted log line is returned as free text.
+    """
+    summary = {
+        "window": "recent_30_minutes_max_300_lines",
+        "source": "tinkera-robot.service",
+        "message_content_exported": False,
+        "lines_inspected": 0,
+        "agent_iterations": 0,
+        "ai_requests_observed": 0,
+        "telegram_replies_observed": 0,
+        "provider_http_status_counts": {},
+        "agent_latency_ms": {},
+    }
+    durations = []
+    for line in raw.splitlines()[-300:]:
+        summary["lines_inspected"] += 1
+        if "[NOYA-AGENT] Iteration " in line:
+            summary["agent_iterations"] += 1
+        if "HTTP Request: POST " in line and "/v1/chat/completions" in line:
+            summary["ai_requests_observed"] += 1
+            # Return only a three-digit HTTP status code, never the URL.
+            match = re.search(r'HTTP/[0-9.]+\\s+(\\d{3})\\b', line)
+            if match:
+                code = match.group(1)
+                counts = summary["provider_http_status_counts"]
+                counts[code] = counts.get(code, 0) + 1
+        if "[NOYA-TIMING]" in line and "Telegram reply finished" in line:
+            summary["telegram_replies_observed"] += 1
+        if "Agent loop done in " in line:
+            match = re.search(r'Agent loop done in (\\d+(?:\\.\\d+)?)ms', line)
+            if match:
+                durations.append(float(match.group(1)))
+    if durations:
+        samples = sorted(durations)
+        summary["agent_latency_ms"] = {
+            "count": len(samples),
+            "p50": round(samples[(len(samples) - 1) // 2], 1),
+            "p95": round(samples[int((len(samples) - 1) * .95)], 1),
+            "max": round(samples[-1], 1),
+        }
+    return summary
+
+
+def _production_journal():
+    p = _cmd([
+        "journalctl", "--unit", "tinkera-robot.service",
+        "--since=-30min", "--lines=300", "--no-pager", "--output=cat",
+    ], timeout=6)
+    if p.returncode:
+        return {"available": False, "reason": "journal_unreadable"}
+    return {"available": True, **summarize_live_journal(p.stdout)}
+
+
 def _api_call(endpoint, *, token, method="GET", payload=None, timeout=6):
     base = os.environ.get("NOYAOPS_URL",
                           "http://127.0.0.1:8000/api/internal/ops/v1").rstrip("/")
@@ -198,6 +256,7 @@ def collect_snapshot(*, production="/opt/noyabot",
         "production": {
             "repository": production_state,
             "systemd": _systemd("tinkera-robot.service"),
+            "sanitized_journal_aggregate": _production_journal(),
         },
         "ops_services": {
             "api": _systemd("noyaops-api.service"),
