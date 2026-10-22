@@ -3,3 +3,6 @@ structlog>=24,<26
 opentelemetry-api>=1.28,<2
 opentelemetry-sdk>=1.28,<2
 opentelemetry-exporter-otlp-proto-http>=1.28,<2
+
+# Private ASGI endpoint for the ops API, on localhost only.
+uvicorn>=0.30,<1
