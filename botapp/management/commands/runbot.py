@@ -2516,6 +2516,18 @@ class Command(BaseCommand):
                     bot_usernames=tuple(identity.username or "" for identity in identities),
                 )
                 cleanup_tasks = [asyncio.create_task(notice_cleanup_loop(bot)) for bot in bots]
+                # Cross-process heartbeat allows the separate private Django
+                # service to distinguish HTTP health from actual Telegram polling.
+                async def _ops_pulse():
+                    from botapp.observability.store import write_heartbeat
+                    while True:
+                        try:
+                            await asyncio.to_thread(write_heartbeat, "telegram-worker")
+                        except Exception as exc:
+                            logger.debug("noya.ops.heartbeat_failed error_type=%s", type(exc).__name__)
+                        await asyncio.sleep(20)
+
+                cleanup_tasks.append(asyncio.create_task(_ops_pulse()))
                 usernames = ", ".join(f"@{identity.username}" for identity in identities)
                 self.stdout.write(f"{len(bots)} Telegram bots are running: {usernames}")
                 try:
