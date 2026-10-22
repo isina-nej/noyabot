@@ -15,6 +15,7 @@ from __future__ import annotations
 
 import contextvars
 import hashlib
+import hmac
 import os
 import secrets
 import uuid
@@ -60,7 +61,9 @@ def _pseudo_key() -> str:
     """Server-local pepper for pseudonymous ids; never exported."""
     global _PSEUDO_KEY_CACHE
     if _PSEUDO_KEY_CACHE is None:
-        _PSEUDO_KEY_CACHE = os.getenv("NOYA_TELEMETRY_HASH_KEY", "") or "noya-dev-pepper"
+        _PSEUDO_KEY_CACHE = (os.getenv("NOYA_TELEMETRY_HASH_KEY", "")
+                             or os.getenv("DJANGO_SECRET_KEY", "")
+                             or "development-only-pseudonymization-key")
     return _PSEUDO_KEY_CACHE
 
 
@@ -68,8 +71,8 @@ def scope_ref(chat_id: int | str | None, user_id: int | str | None) -> str:
     """Keyed pseudonymous identifier replacing (chat, user) raw ids."""
     if chat_id is None and user_id is None:
         return ""
-    payload = f"{chat_id}:{user_id}:{_pseudo_key()}".encode("utf-8", "ignore")
-    return hashlib.sha256(payload).hexdigest()[:12]
+    payload = f"{chat_id}:{user_id}".encode("utf-8", "ignore")
+    return hmac.new(_pseudo_key().encode(), payload, hashlib.sha256).hexdigest()[:12]
 
 
 def new_correlation_id() -> str:
@@ -153,8 +156,8 @@ def snapshot() -> dict:
         "span_id": span_id_var.get() or None,
         "otel_trace_id": otel_trace_id_var.get() or None,
         "otel_span_id": otel_span_id_var.get() or None,
-        "telegram_update_id": update_id_var.get() or None,
-        "message_id": message_id_var.get() or None,
+        "telegram_update_ref": scope_ref("update", update_id_var.get()) if update_id_var.get() else None,
+        "message_ref": scope_ref("message", message_id_var.get()) if message_id_var.get() else None,
         "conversation_scope": scope_ref_var.get() or None,
         "operation": operation_var.get() or None,
     }

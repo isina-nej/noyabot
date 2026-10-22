@@ -1,0 +1,25 @@
+[Unit]
+Description=Noya allowlisted remote diagnostic queue worker
+After=network.target
+
+[Service]
+Type=simple
+User=noya
+WorkingDirectory=/opt/noyabot
+EnvironmentFile=/opt/noyabot/.env
+Environment=NOYA_OPS_STATE_DIR=/var/lib/noyaops
+ExecStart=/opt/noyabot/.venv/bin/python manage.py run_noyaops_worker
+Restart=on-failure
+RestartSec=5
+StateDirectory=noyaops
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ReadWritePaths=/var/lib/noyaops
+MemoryMax=768M
+CPUQuota=80%
+TasksMax=64
+
+[Install]
+WantedBy=multi-user.target

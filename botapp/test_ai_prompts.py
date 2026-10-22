@@ -48,7 +48,11 @@ class NoyaSystemPromptTest(TestCase):
         self.assertIn("خودمونی", prompt)
         self.assertIn("SERVER_CONTEXT", prompt)
         self.assertIn("CREATOR_CONFIG", prompt)
-        self.assertIn("tg://user?id=", prompt)
+        # No Telegram creator ID in CI: do not invent an identity mention.
+        if get_creator_ids():
+            self.assertIn("tg://user?id=", prompt)
+        else:
+            self.assertNotIn("tg://user?id=", prompt)
         self.assertTrue(NOYA_SYSTEM_PROMPT.startswith("تو «نویا» هستی"))
 
     def test_prompt_has_no_primed_internal_annotation_tokens(self):

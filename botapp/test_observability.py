@@ -5,7 +5,7 @@ import unittest
 
 from django.test import SimpleTestCase
 
-from botapp.observability import context, metrics
+from botapp.observability import context, metrics, instrumentation
 from botapp.observability.logging import JsonStdlibFormatter, RING, emit
 from botapp.observability.redaction import redact_value
 
@@ -44,6 +44,15 @@ class ObservabilityTests(SimpleTestCase):
         self.assertEqual(entry["prompt"], "[REDACTED]")
         encoded = JsonStdlibFormatter().format(__import__("logging").LogRecord("x", 20, "", 0, json.dumps(entry), (), None))
         self.assertIn('"event": "test.event"', encoded)
+
+    def test_sse_malformed_and_artifact_events_are_fail_open(self):
+        from unittest.mock import patch
+        with patch("botapp.observability.instrumentation.ops_logging.emit") as emit:
+            instrumentation.ai_sse_malformed(endpoint="noya_chat")
+            instrumentation.internal_artifact_detected(component="response_sanitizer")
+        self.assertEqual(emit.call_count, 2)
+        self.assertEqual(emit.call_args_list[0].args[0], "ai.sse_malformed")
+        self.assertEqual(emit.call_args_list[1].args[0], "output.internal_artifact_detected")
 
     def test_metric_cardinality_is_bounded(self):
         for i in range(100):

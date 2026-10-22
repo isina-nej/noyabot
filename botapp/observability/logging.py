@@ -131,6 +131,14 @@ def emit(event: str, *, level: str = "info", logger_name: str = "botapp.observab
         clean = {"redaction_error": True}
     payload.update(clean)
     RING.append(payload)
+    # The Django HTTP process and the Telegram polling process do not share
+    # RAM; keep bounded redacted logs in their shared private ops store.
+    if os.getenv('NOYA_OPS_PERSIST_LOGS', 'true').lower() in ('true', '1', 'yes', 'on'):
+        try:
+            from .store import record_event
+            record_event(payload)
+        except Exception:
+            pass  # telemetry must not interrupt application work
     std_logger = logging.getLogger(logger_name or "botapp.observability")
     record = logging.LogRecord(
         name=logger_name or "botapp.observability",
@@ -149,22 +157,55 @@ def emit(event: str, *, level: str = "info", logger_name: str = "botapp.observab
     std_logger.handle(record)
 
 
+class SafeOpsStoreHandler(logging.Handler):
+    """Record safe metadata for legacy WARNING/ERROR log records.
+
+    Never serialize record.message, args, traceback or provider response.
+    Those legacy strings can embed private Telegram messages and credentials.
+    """
+    def emit(self, record):
+        try:
+            if record.name.startswith("botapp.observability"):
+                return
+            from .store import record_event
+            entry = _base_fields()
+            entry.update({
+                "event": "legacy.log",
+                "level": record.levelname.lower(),
+                "source_logger": record.name[:100],
+                "error_type": (
+                    type(record.exc_info[1]).__name__
+                    if record.exc_info and record.exc_info[1] else ""
+                ),
+            })
+            record_event(entry)
+        except Exception:
+            pass
+
+
 class JsonStdlibFormatter(logging.Formatter):
     """stdlib formatter producing the same JSON schema as :func:`emit`."""
 
     def format(self, record: logging.LogRecord) -> str:
         payload = _base_fields()
-        payload["event"] = record.getMessage().split(" ", 1)[0][:80]
+        # Avoid deriving event names from the first word of user-provided
+        # text: even a single raw word may be private conversation content.
+        payload["event"] = (record.name.replace(".", "_") + ".log")[:80]
         try:
             maybe = json.loads(record.getMessage())
             if isinstance(maybe, dict):
-                payload.update({k: v for k, v in maybe.items() if k != "event"})
-                payload["event"] = str(maybe.get("event") or payload["event"])
+                unsafe = {"message", "body", "text", "content", "prompt", "reasoning",
+                          "thinking", "user_id", "chat_id", "telegram_update_id",
+                          "message_id", "request_headers"}
+                payload.update({k: v for k, v in maybe.items() if k not in unsafe and k != "event"})
+                payload["event"] = str(maybe.get("event") or payload["event"])[:80]
         except Exception:
-            payload["message"] = record.getMessage()[:500]
+            # Arbitrary legacy logger messages may contain Telegram text,
+            # provider payloads or secrets. Never export their raw contents.
+            payload["message"] = "[UNSTRUCTURED_MESSAGE_REDACTED]"
         payload["level"] = record.levelname.casefold()
         payload["logger"] = record.name
-        return json.dumps(payload, default=str, ensure_ascii=False)
+        return json.dumps(redact_value(payload), default=str, ensure_ascii=False)
 
 
 def apply_structlog_config() -> None:

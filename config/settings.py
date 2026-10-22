@@ -161,19 +161,21 @@ LOGGING = {
     "version": 1,
     "disable_existing_loggers": False,
     "formatters": {
+        "json_safe": {"()": "botapp.observability.logging.JsonStdlibFormatter"},
         "timed": {
             "format": "[%(asctime)s.%(msecs)03d] [%(levelname)s] [%(name)s] %(message)s",
             "datefmt": "%Y-%m-%d %H:%M:%S",
         },
     },
     "handlers": {
+        "ops_store": {"class": "botapp.observability.logging.SafeOpsStoreHandler", "level": "WARNING"},
         "console": {
             "class": "logging.StreamHandler",
-            "formatter": "timed",
+            "formatter": "json_safe",
         },
     },
     "root": {
-        "handlers": ["console"],
+        "handlers": ["console", "ops_store"],
         "level": os.getenv("DJANGO_LOG_LEVEL", "INFO"),
     },
     "loggers": {

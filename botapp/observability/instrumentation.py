@@ -12,6 +12,7 @@ from contextlib import contextmanager
 from . import context as ctx
 from . import metrics as m
 from . import tracing as tr
+from . import logging as ops_logging
 
 
 def _safe(fn, *args, **kwargs):
@@ -144,7 +145,7 @@ def ai_provider_request_end(*, duration_ms: float, status: str, model: str = "",
 
 def ai_sse_malformed(endpoint: str = ""):
     _safe(m.inc, m.AI_SSE_ERRORS, kind="malformed")
-    _safe(m.emit, "ai.sse_malformed", level="error", endpoint=_label(endpoint) or "_internal")
+    _safe(ops_logging.emit, "ai.sse_malformed", level="error", endpoint=_label(endpoint) or "_internal")
 
 
 def ai_response_extracted(*, content_chars: int, reasoning_chars: int = 0):
@@ -187,7 +188,7 @@ def output_sanitized(*, dropped_lines: int = 0, empty: bool = False):
 def internal_artifact_detected(*, component: str, kind: str = "annotation"):
     """A provider scratch-note leaked into the response path."""
     _safe(m.inc, m.OUTPUT_ARTIFACTS_DETECTED, component=_label(component), kind=_reason(kind))
-    _safe(m.emit, "output.internal_artifact_detected", level="warning",
+    _safe(ops_logging.emit, "output.internal_artifact_detected", level="warning",
           component=_label(component), artifact_kind=_reason(kind))
 
 

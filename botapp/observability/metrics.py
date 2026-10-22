@@ -36,6 +36,8 @@ def inc(name: str, amount: float = 1.0, **labels) -> None:
             return
         entry = _METRICS.setdefault(key, {"type": "counter", "value": 0.0})
         entry["value"] += max(0.0, float(amount))
+    from . import otel_signals
+    otel_signals.counter(name, max(0.0, float(amount)), dict(key[1]))
 
 
 def observe(name: str, value: float, buckets=(5, 25, 50, 100, 250, 500,
@@ -55,6 +57,8 @@ def observe(name: str, value: float, buckets=(5, 25, 50, 100, 250, 500,
         for bucket in buckets:
             if value <= bucket:
                 entry["buckets"][bucket] += 1
+    from . import otel_signals
+    otel_signals.histogram(name, value, dict(key[1]))
 
 
 def set_gauge(name: str, value: float, **labels) -> None:

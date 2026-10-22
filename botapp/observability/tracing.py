@@ -87,6 +87,11 @@ def init_telemetry() -> bool:
             _STATE["provider"] = "sdk"
         otel_trace.set_tracer_provider(provider)
         _STATE["tracer"] = otel_trace.get_tracer("botapp.noya")
+        try:
+            from . import otel_signals
+            otel_signals.configure()
+        except Exception:
+            pass
         return True
     except Exception:
         _STATE["provider"] = "correlation"
@@ -142,12 +147,21 @@ def start_span(name: str, **attributes):
                 with _STATE["tracer"].start_as_current_span(
                     name, kind=SpanKind.INTERNAL
                 ) as span:
-                    for key, value in attributes.items():
-                        try:
-                            span.set_attribute(str(key), str(value)[:200])
-                        except Exception:
-                            pass
-                    yield span
+                    from . import context as ctx
+                    span_ctx = span.get_span_context()
+                    trace_token = ctx.trace_id_var.set(f"{span_ctx.trace_id:032x}")
+                    span_token = ctx.span_id_var.set(f"{span_ctx.span_id:016x}")
+                    try:
+                        for key, value in attributes.items():
+                            try:
+                                span.set_attribute(str(key), str(value)[:200])
+                            except Exception:
+                                pass
+                        yield span
+                    finally:
+                        ctx.trace_id_var.reset(trace_token)
+                        ctx.span_id_var.reset(span_token)
+
 
             return _otel()
     except Exception:
@@ -158,9 +172,14 @@ def start_span(name: str, **attributes):
 
     @contextlib.contextmanager
     def _fallback():
-        ctx.span_id_var.set(ctx.otel_safe_span_id(name))
-        ctx.operation_var.set(name)
-        yield None
+        import secrets
+        span_token = ctx.span_id_var.set(secrets.token_hex(8))
+        op_token = ctx.operation_var.set(name)
+        try:
+            yield None
+        finally:
+            ctx.span_id_var.reset(span_token)
+            ctx.operation_var.reset(op_token)
 
     return _fallback()
 
