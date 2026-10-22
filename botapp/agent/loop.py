@@ -9,10 +9,11 @@ import json
 import logging
 import os
 import re
+import time
 from typing import Any
 
 import httpx
-from botapp.observability.instrumentation import instrument_async
+from botapp.observability.instrumentation import (instrument_async, ai_provider_request_begin, ai_provider_request_end, ai_sse_malformed, agent_tool_dispatch)
 
 from .registry import registry
 from .responses import sanitize_outgoing_text
@@ -50,6 +51,7 @@ def _parse_sse_stream(raw: str) -> dict | None:
     message: dict = {"role": "assistant", "content": ""}
     tool_calls_map: dict[int, dict] = {}
     reasoning_chars = 0
+    saw_choice = False
     for line in raw.split("\n"):
         line = line.strip()
         if not line.startswith("data: "):
@@ -64,6 +66,7 @@ def _parse_sse_stream(raw: str) -> dict | None:
         choices = chunk.get("choices", [])
         if not choices:
             continue
+        saw_choice = True
         delta = choices[0].get("delta", {})
         # content
         c = delta.get("content")
@@ -95,10 +98,10 @@ def _parse_sse_stream(raw: str) -> dict | None:
 
     if tool_calls_map:
         message["tool_calls"] = [tool_calls_map[i] for i in sorted(tool_calls_map)]
-    return {
+    return ({
         "choices": [{"message": message, "finish_reason": "stop"}],
         "reasoning_chars": reasoning_chars,
-    }
+    } if saw_choice else None)
 
 
 @instrument_async("agent.loop")
@@ -157,6 +160,19 @@ async def run_agent_loop(
     MAX_FETCHES = 6
     MAX_RESEARCH_CALLS = 4
 
+    async def _observed_dispatch(name, arguments):
+        started = time.perf_counter()
+        status = "failed"
+        try:
+            response = await registry.dispatch_async(name, arguments)
+            status = "failed" if str(response).startswith("Error") else "ok"
+            return response
+        finally:
+            agent_tool_dispatch(
+                tool=name, status=status,
+                duration_ms=(time.perf_counter() - started) * 1000,
+            )
+
     for iteration in range(MAX_ITERATIONS):
         payload: dict[str, Any] = {
             "model": tool_model,
@@ -171,20 +187,27 @@ async def run_agent_loop(
         # Send request with explicit stream=false, but parse SSE anyway
         # because some 9Router combos always return SSE
         payload["stream"] = False
+        ai_provider_request_begin(model=tool_model)
+        request_started = time.perf_counter()
         async with httpx.AsyncClient(timeout=120) as client:
             try:
                 resp = await client.post(api_url, json=payload, headers=headers)
                 resp.raise_for_status()
+                ai_provider_request_end(duration_ms=(time.perf_counter()-request_started)*1000, status="ok", model=tool_model, http_status=resp.status_code)
             except httpx.ReadTimeout as e:
+                ai_provider_request_end(duration_ms=(time.perf_counter()-request_started)*1000, status="timeout", model=tool_model, timed_out=True)
                 logger.warning(f"[NOYA-AGENT] Read timeout from AI provider: {type(e).__name__}")
                 return "پاسخ هوش مصنوعی زمان‌بر شد (تایم‌اوت). لطفاً دوباره تلاش کنید.", metadata
             except httpx.TimeoutException as e:
+                ai_provider_request_end(duration_ms=(time.perf_counter()-request_started)*1000, status="timeout", model=tool_model, timed_out=True)
                 logger.warning(f"[NOYA-AGENT] Timeout contacting AI provider: {type(e).__name__}")
                 return "خطا در اتصال به هوش مصنوعی (تایم‌اوت).", metadata
             except httpx.HTTPStatusError as e:
+                ai_provider_request_end(duration_ms=(time.perf_counter()-request_started)*1000, status="http_error", model=tool_model, http_status=e.response.status_code)
                 logger.warning(f"[NOYA-AGENT] API error status: {e.response.status_code}")
                 return f"خطا در ارتباط با هوش مصنوعی ({e.response.status_code})", metadata
             except httpx.RequestError as e:
+                ai_provider_request_end(duration_ms=(time.perf_counter()-request_started)*1000, status="transport_error", model=tool_model)
                 logger.warning(f"[NOYA-AGENT] Request error: {type(e).__name__}")
                 return "خطا در اتصال به هوش مصنوعی.", metadata
 
@@ -200,6 +223,7 @@ async def run_agent_loop(
             # SSE stream format: "data: {json}\n\ndata: {json}\n\n..."
             data = _parse_sse_stream(text)
             if not data:
+                ai_sse_malformed(endpoint="noya_chat")
                 logger.error(f"[NOYA-AGENT] Empty/unparseable response: {text[:200]}")
                 return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
 
@@ -253,7 +277,7 @@ async def run_agent_loop(
             except json.JSONDecodeError:
                 args = {}
 
-            logger.info(f"[NOYA-AGENT] 🔧 Calling tool: {tool_name}({args})")
+            logger.info("[NOYA-AGENT] Calling tool: %s", tool_name)
 
             # ── Loop & Budget Deduplication Guards ──
             if tool_name == "web_search":
@@ -266,7 +290,7 @@ async def run_agent_loop(
                 else:
                     seen_search_queries.add(q)
                     search_count += 1
-                    result = await registry.dispatch_async(tool_name, args)
+                    result = await _observed_dispatch(tool_name, args)
             elif tool_name == "fetch_url":
                 from botapp.web.ranking import canonicalize_url
                 u = canonicalize_url(args.get("url") or "")
@@ -277,7 +301,7 @@ async def run_agent_loop(
                 else:
                     seen_fetch_urls.add(u)
                     fetch_count += 1
-                    result = await registry.dispatch_async(tool_name, args)
+                    result = await _observed_dispatch(tool_name, args)
             elif tool_name in (
                 "research.social_search", "x.search_posts", "x.get_post",
                 "x.get_thread", "x.get_user", "x.get_user_posts",
@@ -297,9 +321,9 @@ async def run_agent_loop(
                 else:
                     seen_research_queries.add(q)
                     research_count += 1
-                    result = await registry.dispatch_async(tool_name, args)
+                    result = await _observed_dispatch(tool_name, args)
             else:
-                result = await registry.dispatch_async(tool_name, args)
+                result = await _observed_dispatch(tool_name, args)
 
             used_tools.append(tool_name)
 
