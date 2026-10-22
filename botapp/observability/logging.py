@@ -157,6 +157,32 @@ def emit(event: str, *, level: str = "info", logger_name: str = "botapp.observab
     std_logger.handle(record)
 
 
+class SafeOpsStoreHandler(logging.Handler):
+    """Record safe metadata for legacy WARNING/ERROR log records.
+
+    Never serialize record.message, args, traceback or provider response.
+    Those legacy strings can embed private Telegram messages and credentials.
+    """
+    def emit(self, record):
+        try:
+            if record.name.startswith("botapp.observability"):
+                return
+            from .store import record_event
+            entry = _base_fields()
+            entry.update({
+                "event": "legacy.log",
+                "level": record.levelname.lower(),
+                "source_logger": record.name[:100],
+                "error_type": (
+                    type(record.exc_info[1]).__name__
+                    if record.exc_info and record.exc_info[1] else ""
+                ),
+            })
+            record_event(entry)
+        except Exception:
+            pass
+
+
 class JsonStdlibFormatter(logging.Formatter):
     """stdlib formatter producing the same JSON schema as :func:`emit`."""
 
