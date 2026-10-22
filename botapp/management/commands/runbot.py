@@ -1920,7 +1920,7 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             await reply_noya_answer(message, clean_answer)
     else:
         # --- Legacy ACTION dispatch (fallback for non-agent mode) ---
-        handled = await _dispatch_ai_action(message, answer or "", images=images)
+        handled = False if model_first else await _dispatch_ai_action(message, answer or "", images=images)
         if not handled:
             await reply_noya_answer(message, answer)
     logger.info(
