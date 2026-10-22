@@ -19,6 +19,21 @@ agent, not an unrestricted remote shell or an automatic production deploy.
 - Codex CLI installed and signed in under the agent's own account using an
   supported authentication mode. The Codex service may incur usage costs.
 
+## 0. Fetch the AI Ops code without touching the running bot
+
+As root on the server:
+
+```bash
+git -C /opt/noyabot fetch origin feat/aiops-server-repair-runner
+git -C /opt/noyabot worktree add --detach /opt/noyabot-aiops-review \\
+  origin/feat/aiops-server-repair-runner
+cd /opt/noyabot-aiops-review
+/opt/noyabot/.venv/bin/python -m noyaops.aiops --help
+```
+
+This creates an **additional** clean review worktree. It does not update
+`/opt/noyabot`, restart Telegram or alter the already-running Ops services.
+
 ## 1. Prepare a restricted agent identity
 
 Run **on the server**, as root. This user has no sudo privileges or group
@@ -38,11 +53,11 @@ files and SSH keys are unreadable by `noya-aiops` before running an AI agent.
 
 ## 2. Collect a safe evidence snapshot as the trusted operator
 
-Use the **review checkout** (currently
-`/opt/noyabot-ops-review`); do not change the active bot:
+Use the **new AI Ops review checkout** `/opt/noyabot-aiops-review`;
+ do not change the active bot:
 
 ```bash
-cd /opt/noyabot-ops-review
+cd /opt/noyabot-aiops-review
 set -a
 source /root/noyaops-review.env
 set +a
@@ -98,7 +113,7 @@ Run under the unprivileged agent user with a fresh clean environment. No ops
 credentials or production API keys are inherited by the agent:
 
 ```bash
-cd /opt/noyabot-ops-review
+cd /opt/noyabot-aiops-review
 runuser -u noya-aiops -- env -i \
   HOME=/var/lib/noya-aiops USER=noya-aiops LOGNAME=noya-aiops \
   PATH=/var/lib/noya-aiops/.local/bin:/usr/local/bin:/usr/bin:/bin \
