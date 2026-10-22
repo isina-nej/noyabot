@@ -86,7 +86,15 @@ def record_event(entry: dict) -> bool:
         # Never persist unstructured/raw conversations, even from a new caller.
         disallowed = {"prompt", "raw_prompt", "message", "content", "caption", "text", "reasoning", "thinking"}
         clean = {k: v for k, v in clean.items() if k not in disallowed}
-        data = json.dumps(clean, ensure_ascii=False, default=str)[:16000]
+        data = json.dumps(clean, ensure_ascii=False, default=str)
+        if len(data) > 16000:
+            # Truncate by *fields*, not JSON bytes: slicing JSON would make
+            # the persisted event unparseable for logs/trace API readers.
+            allowed = ("timestamp", "level", "service", "environment", "release",
+                       "git_commit", "event", "trace_id", "span_id",
+                       "correlation_id", "operation", "status", "error_type")
+            data = json.dumps({**{k: clean.get(k) for k in allowed if k in clean},
+                               "truncated": True}, ensure_ascii=False, default=str)
         with _connect() as db:
             db.execute(
                 "INSERT INTO events(ts,level,service,trace_id,correlation_id,payload) VALUES(?,?,?,?,?,?)",
@@ -130,7 +138,10 @@ def query_events(*, cursor=0, limit=100, level="", service="", trace_id="", corr
             rows = list(reversed(rows))
     entries = []
     for row in rows:
-        item = json.loads(row["payload"])
+        try:
+            item = json.loads(row["payload"])
+        except (ValueError, TypeError):
+            item = {"event": "log_corrupt", "level": "warning"}
         item["_seq"] = row["seq"]
         entries.append(item)
     next_cursor = rows[-1]["seq"] if rows else cursor
