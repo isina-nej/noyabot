@@ -9,6 +9,7 @@ from django.conf import settings
 from django.db.models import Q
 
 from botapp.models import MemoryConversation, MemoryConversationMember, MemoryItem, TelegramUser
+from botapp.observability.instrumentation import instrument_async
 from .context import MemoryContext, build_memory_context
 from .storage import ingest_message
 
@@ -257,6 +258,7 @@ async def _relationship_context_for_message(message) -> dict:
         return {}
 
 
+@instrument_async("memory.context_and_ai")
 async def run_ai_with_memory(
     message,
     question: str,

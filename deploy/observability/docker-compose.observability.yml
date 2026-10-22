@@ -1,0 +1,28 @@
+name: noya-observability
+
+services:
+  alloy:
+    image: grafana/alloy:v1.4.2
+    command: ["run", "/etc/alloy/config.alloy"]
+    volumes:
+      - ./alloy.alloy:/etc/alloy/config.alloy:ro
+    ports:
+      - "127.0.0.1:4318:4318"
+    restart: unless-stopped
+    depends_on:
+      - openobserve
+
+  openobserve:
+    image: openobserve/openobserve:v0.14.0
+    environment:
+      ZO_ROOT_USER_EMAIL: ${OPENOBSERVE_ADMIN_EMAIL:?set OPENOBSERVE_ADMIN_EMAIL}
+      ZO_ROOT_USER_PASSWORD: ${OPENOBSERVE_ADMIN_PASSWORD:?set OPENOBSERVE_ADMIN_PASSWORD}
+      ZO_DATA_DIR: /data
+    volumes:
+      - openobserve-data:/data
+    ports:
+      - "127.0.0.1:5080:5080"
+    restart: unless-stopped
+
+volumes:
+  openobserve-data:

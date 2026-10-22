@@ -265,7 +265,8 @@ def sanitize_outgoing_text(text: str) -> str:
     blocks are never altered.  Idempotent; returns ``""`` when nothing human
     remains.
     """
-    cleaned = clean_model_response(text or "")
+    original = text or ""
+    cleaned = clean_model_response(original)
     if not cleaned:
         return ""
     kept: list[str] = []
@@ -282,7 +283,19 @@ def sanitize_outgoing_text(text: str) -> str:
             continue
         kept.append(line)
     result = "\n".join(kept)
-    return result.strip() if result.strip() else ""
+    value = result.strip() if result.strip() else ""
+    if value != original.strip():
+        try:
+            from botapp.observability.instrumentation import internal_artifact_detected, output_sanitized
+            if original.strip() and not value:
+                output_sanitized(empty=True)
+            else:
+                output_sanitized(dropped_lines=max(0, len(original.splitlines()) - len(value.splitlines())))
+            if len(value) < len(original):
+                internal_artifact_detected(component="response_sanitizer")
+        except Exception:
+            pass
+    return value
 
 
 # ---------------------------------------------------------------------------

@@ -1,0 +1,1 @@
+{"title":"Noya AI / 9Router","schemaVersion":39,"panels":[{"type":"timeseries","title":"Provider latency","targets":[{"expr":"noya_ai_provider_latency_ms"}]},{"type":"timeseries","title":"Provider failures","targets":[{"expr":"noya_ai_provider_failures"}]},{"type":"stat","title":"Token usage","targets":[{"expr":"noya_ai_tokens_input_total + noya_ai_tokens_output_total"}]}]}

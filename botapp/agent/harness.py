@@ -22,6 +22,7 @@ from .permissions import ensure_admin_permission, ensure_bot_capability
 from .registry import registry
 from .risk import LOW
 from .sandbox import run_sandboxed
+from botapp.observability.instrumentation import instrument_async
 
 logger = logging.getLogger("botapp.agent")
 
@@ -226,6 +227,7 @@ async def _deterministic_investigation(ctx, bot, user_text: str) -> HarnessResul
     )
 
 
+@instrument_async("harness.investigation")
 async def run_investigation(
     *,
     ctx,

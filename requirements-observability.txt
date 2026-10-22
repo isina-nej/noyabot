@@ -1,0 +1,5 @@
+# Optional full profile.  The application remains functional without these.
+structlog>=24,<26
+opentelemetry-api>=1.28,<2
+opentelemetry-sdk>=1.28,<2
+opentelemetry-exporter-otlp-proto-http>=1.28,<2

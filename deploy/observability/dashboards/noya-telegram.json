@@ -1,0 +1,1 @@
+{"title":"Noya Telegram Pipeline","schemaVersion":39,"panels":[{"type":"timeseries","title":"Updates received","targets":[{"expr":"noya_telegram_updates_received"}]},{"type":"timeseries","title":"Processing latency","targets":[{"expr":"noya_telegram_update_latency_ms"}]},{"type":"stat","title":"Send failures","targets":[{"expr":"noya_telegram_send_failures"}]}]}

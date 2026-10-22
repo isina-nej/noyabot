@@ -90,7 +90,7 @@ class ChannelInsightUnavailable(RuntimeError):
             ),
             "session_unauthorized": (
                 "سشن MTProto روی سرور معتبر نیست (خارج شده یا منقضی شده)؛ "
-                "باید دوباره سشن‌یشن انجام بشه."
+                "باید دوباره احراز هویت بشه."
             ),
             "telethon_missing": "کتابخانهٔ MTProto روی سرور نصب نیست؛ تحلیل تاریخچه ممکن نیست.",
             "entity_not_found": (
@@ -319,7 +319,10 @@ def message_meta(message) -> ChannelMessageMeta:
         user_id = getattr(from_id, "user_id", None)
         channel_id = getattr(from_id, "channel_id", None)
         if user_id:
-            author = f"user:{user_id}"
+            # A Telethon fallback author is an id; keep it correlatable but
+            # never place the raw Telegram id in the model evidence/logs.
+            from botapp.observability.context import scope_ref
+            author = f"user:{scope_ref(None, user_id)}"
         elif channel_id:
             author = "channel"
         else:
@@ -484,6 +487,17 @@ def _mtproto_config() -> tuple[str, str, str]:
     if not session_path:
         session_path = str(Path(__file__).resolve().parent.parent / "noyabot.session")
     return api_id, api_hash, session_path
+
+
+def configuration_status() -> dict[str, bool | str]:
+    """Return safe readiness facts without exposing credentials or paths."""
+    enabled = os.getenv("CHANNEL_ANALYSIS_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
+    api_id, api_hash, session_path = _mtproto_config()
+    return {
+        "enabled": enabled,
+        "credentials_configured": bool(api_id and api_hash),
+        "session_present": Path(session_path).exists(),
+    }
 
 
 async def _resolve_entity(client, chat_id: int):

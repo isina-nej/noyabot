@@ -77,9 +77,11 @@ class GuestBotTest(SimpleTestCase):
         )
 
     def test_channel_question_targets_mention_or_name_only(self):
-        self.assertEqual(_channel_question("@NuyaRobot امروز چه خبر؟", "NuyaRobot"), "امروز چه خبر؟")
-        self.assertEqual(_channel_question("نویا این را خلاصه کن", "NuyaRobot"), "این را خلاصه کن")
-        self.assertIsNone(_channel_question("یک پست عادی", "NuyaRobot"))
+        self.assertEqual(_channel_question("@NuyaRobot امروز چه خبر؟", "NuyaRobot"), ("امروز چه خبر؟", False))
+        self.assertEqual(_channel_question("نویا این را خلاصه کن", "NuyaRobot"), ("این را خلاصه کن", False))
+        self.assertEqual(_channel_question("یک پست عادی", "NuyaRobot"), (None, False))
+        self.assertEqual(_channel_question("نویا", "NuyaRobot"), ("", True))
+        self.assertEqual(_channel_question("@NuyaRobot", "NuyaRobot"), ("", True))
 
     def test_channel_handler_replies_to_targeted_post(self):
         message = SimpleNamespace(
@@ -111,6 +113,50 @@ class GuestBotTest(SimpleTestCase):
             "پاسخ کانال",
             parse_mode="HTML",
         )
+
+    def test_channel_handler_replies_canned_on_bare_name(self):
+        message = SimpleNamespace(
+            text="نویا",
+            bot=SimpleNamespace(
+                get_me=AsyncMock(return_value=SimpleNamespace(username="NuyaRobot")),
+            ),
+            chat=SimpleNamespace(id=-100),
+            message_id=78,
+            reply=AsyncMock(),
+        )
+        import asyncio
+        with patch("botapp.nouya_handler.run_ai_with_memory") as run_memory:
+            asyncio.run(channel_nouya_handler(message))
+        run_memory.assert_not_awaited()
+        message.reply.assert_awaited_once()
+        from botapp.nouya_handler import RESPONSES
+        self.assertIn(message.reply.call_args[0][0], RESPONSES)
+
+    def test_channel_handler_analysis_reports_mtproto_unavailable(self):
+        progress_mock = SimpleNamespace(
+            edit_text=AsyncMock(),
+        )
+        message = SimpleNamespace(
+            text="نویا تحلیل",
+            bot=SimpleNamespace(
+                get_me=AsyncMock(return_value=SimpleNamespace(username="NuyaRobot")),
+            ),
+            chat=SimpleNamespace(id=-100),
+            message_id=79,
+            reply=AsyncMock(return_value=progress_mock),
+        )
+        from botapp.channel_insights import ChannelInsightUnavailable
+        with patch(
+            "botapp.nouya_handler.fetch_channel_digest",
+            side_effect=ChannelInsightUnavailable("mtproto_not_configured"),
+        ), patch(
+            "botapp.nouya_handler.run_ai_with_memory",
+            new=AsyncMock(return_value=("تحلیل پست انجام شد", {})),
+        ) as run_memory:
+            import asyncio
+            asyncio.run(channel_nouya_handler(message))
+        run_memory.assert_not_awaited()
+        progress_mock.edit_text.assert_awaited_once()
 
     def test_guest_update_observer_is_registered(self):
         self.assertIn("guest_message", router.resolve_used_update_types())

@@ -24,6 +24,7 @@ from botapp.noya_context import build_noya_user_payload, strip_bot_address
 from botapp.services import call_noya_api
 from botapp.telegram_media import collect_noya_images
 from botapp.telegram_rich import extract_message_body
+from botapp.observability import logging as obs_logging
 
 logger = logging.getLogger(__name__)
 
@@ -83,7 +84,13 @@ def _guest_question(message: types.Message, bot_username: str = "") -> str:
     )
 
 
-def _channel_question(text: str, bot_username: str = "") -> str | None:
+def _channel_question(text: str, bot_username: str = "") -> tuple[str | None, bool]:
+    """Extract the question from a channel post addressed to Noya.
+
+    Returns ``(question, is_bare)`` where *is_bare* is True when the post
+    contained only the bot name with no real question — the caller should
+    reply with a canned response instead of invoking the AI.
+    """
     text = text.strip()
     mention = bool(
         bot_username
@@ -93,12 +100,15 @@ def _channel_question(text: str, bot_username: str = "") -> str | None:
         _NOYA_NAME_RE.search(text) or _NOYA_LATIN_NAME_RE.search(text)
     )
     if not (mention or name_call):
-        return None
+        return None, False
     if bot_username:
         text = re.sub(rf"@{re.escape(bot_username)}\b", "", text, flags=re.IGNORECASE)
     text = _NOYA_NAME_RE.sub("", text)
     text = _NOYA_LATIN_NAME_RE.sub("", text)
-    return text.strip() or "به این پست پاسخ بده."
+    cleaned = text.strip()
+    if not cleaned:
+        return cleaned, True  # bare name, no question
+    return cleaned, False
 
 
 async def _send_channel_answer(location: types.Message, answer: str) -> None:
@@ -129,8 +139,11 @@ async def channel_nouya_handler(message: types.Message):
     """Channel «نویا» post — exactly the group pipeline, plus MTProto analysis."""
     bot_user = await message.bot.get_me()
     body = extract_message_body(message)
-    question = _channel_question(body, bot_user.username or "")
+    question, is_bare = _channel_question(body, bot_user.username or "")
     if question is None:
+        return
+    if is_bare:
+        await message.reply(random.choice(RESPONSES))
         return
     images = await collect_noya_images(message.bot, message)
 
@@ -140,17 +153,23 @@ async def channel_nouya_handler(message: types.Message):
         progress = await message.reply("دارم تاریخچهٔ کانال می‌خونم… چند دقیقه صبر کن ✍️")
         try:
             digest = await fetch_channel_digest(int(message.chat.id), limit)
+            obs_logging.emit(
+                "channel.analysis.digest_ready",
+                message_count=digest.message_count,
+                requested_limit=limit,
+            )
+            prompt = build_analysis_prompt(digest, question)
+            answer, _meta = await call_noya_api(
+                prompt,
+                session_id=f"telegram:channel-analysis:{message.chat.id}:{message.message_id}",
+                images=None,
+            )
+            await _send_channel_answer(progress, answer)
+            return
         except ChannelInsightUnavailable as unavailable:
+            obs_logging.emit("channel.analysis.unavailable", level="warning", reason=unavailable.code)
             await _send_channel_answer(progress, unavailable.user_message())
             return
-        prompt = build_analysis_prompt(digest, question)
-        answer, _meta = await call_noya_api(
-            prompt,
-            session_id=f"telegram:channel-analysis:{message.chat.id}:{message.message_id}",
-            images=None,
-        )
-        await _send_channel_answer(progress, answer)
-        return
 
     payload = build_noya_user_payload(message, question, bot_username=bot_user.username or "")
     progress = await message.reply("یک لحظه…")

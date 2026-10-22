@@ -1,0 +1,23 @@
+// Full profile collector.  Keep it on a private interface or behind SSH/Tailscale.
+otelcol.receiver.otlp "noya" {
+  http { endpoint = "0.0.0.0:4318" }
+  output { metrics = [otelcol.processor.batch.noya.input], logs = [otelcol.processor.batch.noya.input], traces = [otelcol.processor.batch.noya.input] }
+}
+
+otelcol.processor.batch "noya" {
+  timeout = "5s"
+  send_batch_size = 256
+  output { metrics = [otelcol.exporter.otlphttp.openobserve.input], logs = [otelcol.exporter.otlphttp.openobserve.input], traces = [otelcol.exporter.otlphttp.openobserve.input] }
+}
+
+otelcol.exporter.otlphttp "openobserve" {
+  client {
+    endpoint = "http://openobserve:5080/api/default"
+    auth = otelcol.auth.basic.openobserve.handler
+  }
+}
+
+otelcol.auth.basic "openobserve" {
+  username = sys.env("OPENOBSERVE_ADMIN_EMAIL")
+  password = sys.env("OPENOBSERVE_ADMIN_PASSWORD")
+}

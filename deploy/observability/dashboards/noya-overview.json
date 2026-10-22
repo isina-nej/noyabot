@@ -1,0 +1,11 @@
+{
+  "title": "Noya Overview",
+  "schemaVersion": 39,
+  "tags": ["noya", "generated"],
+  "timezone": "utc",
+  "panels": [
+    {"type": "stat", "title": "Uptime", "targets": [{"expr": "noya_process_uptime_seconds"}]},
+    {"type": "timeseries", "title": "Telegram processing latency", "targets": [{"expr": "noya_telegram_update_latency_ms"}]},
+    {"type": "timeseries", "title": "AI provider latency", "targets": [{"expr": "noya_ai_provider_latency_ms"}]}
+  ]
+}

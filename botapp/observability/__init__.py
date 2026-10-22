@@ -1,0 +1,76 @@
+"""Noya observability: correlation, JSON logs, metrics, tracing, health.
+
+Public functions are stable and safe to call from any process (bot worker,
+Django server, management command).  Telemetry must never interrupt traffic;
+nothing here raises by design.
+"""
+from . import context, metrics, redaction, tracing
+from .instrumentation import (  # noqa: F401 (re-exported pipeline signals)
+    agent_tool_dispatch,
+    ai_provider_request_begin,
+    ai_provider_request_end,
+    ai_response_extracted,
+    ai_sse_malformed,
+    emotion_duplicate_apology,
+    emotion_event_classified,
+    emotion_persistence_failure,
+    harness_run_started,
+    harness_step,
+    internal_artifact_detected,
+    memory_lookup_failure,
+    ops_auth_failure,
+    ops_diagnostic_run,
+    ops_rate_limited,
+    output_sanitized,
+    relationship_state_load,
+    relationship_state_transition,
+    security_permission_check,
+    stage,
+    telegram_send_failure,
+    telegram_update_ignored,
+    telegram_update_processed,
+    telegram_update_received,
+    uptime_gauge,
+)
+from .logging import configure, emit, RING  # noqa: F401
+from .redaction import redact_string, redact_value  # noqa: F401
+from .tracing import init_telemetry, start_span  # noqa: F401
+
+__all__ = [
+    "agent_tool_dispatch",
+    "ai_provider_request_begin",
+    "ai_provider_request_end",
+    "ai_response_extracted",
+    "ai_sse_malformed",
+    "configure",
+    "context",
+    "emit",
+    "emotion_duplicate_apology",
+    "emotion_event_classified",
+    "emotion_persistence_failure",
+    "harness_run_started",
+    "harness_step",
+    "init_telemetry",
+    "internal_artifact_detected",
+    "memory_lookup_failure",
+    "metrics",
+    "ops_auth_failure",
+    "ops_diagnostic_run",
+    "ops_rate_limited",
+    "output_sanitized",
+    "redact_string",
+    "redaction",
+    "redact_value",
+    "relationship_state_load",
+    "relationship_state_transition",
+    "RING",
+    "security_permission_check",
+    "start_span",
+    "stage",
+    "telegram_send_failure",
+    "telegram_update_ignored",
+    "telegram_update_processed",
+    "telegram_update_received",
+    "tracing",
+    "uptime_gauge",
+]

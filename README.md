@@ -364,3 +364,23 @@ DB_ENGINE=django.db.backends.mysql DB_NAME=group_bot DB_USER=group_bot \
 
 هیچ توکن یا Secret نباید در Git، Log، Screenshot یا Artifact ذخیره شود.
 
+### Observability و عیب‌یابی راه دور
+
+پکیج \`botapp/observability/\` لاگ JSON محدود و redact‌شده، correlation/trace id، متریک‌های کم‌کاردینالیتی و exporter اختیاری OpenTelemetry را فراهم می‌کند. این لایه fail-open است؛ نبودن collector نباید پردازش تلگرام را متوقف کند. API عیب‌یابی فقط زیر مسیر خصوصی \`/api/internal/ops/v1/\` و با همان \`X-API-Key\` موجود فعال است:
+
+\`\`\`text
+GET  /health/ ، /runtime/ ، /logs/ ، /metrics/summary/ ، /traces/<id>/
+GET  /tests/ و /diagnostics/
+POST /diagnostics/ با بدنهٔ {"test_id":"process"}
+\`\`\`
+
+اجرای تشخیصی فقط از تست‌های allowlist‌شدهٔ read-only (\`process\` و \`database\`) استفاده می‌کند و shell، مسیر فایل یا کد دلخواه را اجرا نمی‌کند. برای دسترسی محلی از تونل SSH یا شبکهٔ خصوصی استفاده کنید:
+
+\`\`\`bash
+NOYAOPS_URL=http://127.0.0.1:8000/api/internal/ops/v1 \\
+NOYAOPS_API_KEY='...' .venv/bin/python -m noyaops doctor
+NOYAOPS_API_KEY='...' .venv/bin/python -m noyaops logs --level error
+\`\`\`
+
+پروفایل سبک در خود Django و با ring محدود کار می‌کند. پروفایل کامل نمونهٔ Grafana Alloy/OpenObserve، فایل داشبورد و واحد systemd را در \`deploy/observability/\` دارد؛ قبل از استفادهٔ production نسخهٔ image، منابع و Secretها را بازبینی کنید.
+

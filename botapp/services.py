@@ -226,7 +226,9 @@ def consume_group_quota(chat_id: int, chat_title: str = "") -> bool:
 from botapp.ai import build_ai_messages
 from botapp.noya_clock import format_clock_reply, is_clock_question
 from botapp.noya_search import maybe_web_search
+from botapp.observability.instrumentation import instrument_async
 
+@instrument_async("ai.request")
 async def call_noya_api(
     question: str,
     session_id: str,

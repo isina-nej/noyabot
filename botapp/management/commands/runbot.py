@@ -87,6 +87,11 @@ from botapp.telegram_rich import extract_message_body
 from botapp.emoji_handlers import router as emoji_router
 from botapp.nouya_handler import router as nouya_router
 from botapp.agent_handlers import ArchiveMiddleware, router as agent_router
+from botapp.observability.logging import configure as configure_observability
+from botapp.observability.tracing import init_telemetry
+from botapp.observability.middleware import TelegramMiddleware
+from botapp.observability import context as obs_context
+from botapp.observability import logging as obs_logging
 logger = logging.getLogger(__name__)
 
 TARGET_CHAT_ID = os.getenv("TARGET_CHAT_ID", "@CoffeeMan_nej").strip()
@@ -2341,19 +2346,18 @@ class BotPeerObserveMiddleware(BaseMiddleware):
             update = data.get("event_update")
             is_edit = bool(getattr(update, "edited_message", None))
             if (user and getattr(user, "is_bot", False)) or reply_to_us:
-                # WARNING: production root log level is WARNING (info is silent).
-                logger.warning(
-                    "noya_peer_update chat=%s msg=%s edit=%s from_id=%s from_bot=%s "
-                    "username=%s reply_to_us=%s flags=%s text=%r",
-                    event.chat.id,
-                    event.message_id,
-                    is_edit,
-                    getattr(user, "id", None),
-                    bool(user and getattr(user, "is_bot", False)),
-                    getattr(user, "username", None),
-                    reply_to_us,
-                    _message_kind_flags(event),
-                    (_message_body(event)[:160]),
+                # Keep peer diagnostics searchable without exporting raw
+                # Telegram ids, usernames, or message bodies.
+                obs_logging.emit(
+                    "telegram.peer_update",
+                    level="warning",
+                    conversation_scope=obs_context.scope_ref(
+                        getattr(event.chat, "id", None), getattr(user, "id", None)
+                    ),
+                    edit=is_edit,
+                    from_bot=bool(user and getattr(user, "is_bot", False)),
+                    reply_to_us=reply_to_us,
+                    flags=_message_kind_flags(event),
                 )
         return await handler(event, data)
 
@@ -2448,6 +2452,10 @@ def build_dispatcher(bot_username: str = "", *, bot_usernames: tuple[str, ...] =
     dispatcher.edited_message.outer_middleware(ForcedMembershipMiddleware())
     dispatcher.message.outer_middleware(BotStartGateMiddleware())
     dispatcher.edited_message.outer_middleware(BotStartGateMiddleware())
+    dispatcher.message.outer_middleware(TelegramMiddleware())
+    dispatcher.edited_message.outer_middleware(TelegramMiddleware())
+    dispatcher.channel_post.outer_middleware(TelegramMiddleware())
+    dispatcher.edited_channel_post.outer_middleware(TelegramMiddleware())
     # Opt-in message archival (no-op unless MESSAGE_ARCHIVE_ENABLED). Runs as an
     # outer middleware so it captures group messages regardless of routing.
     dispatcher.message.outer_middleware(ArchiveMiddleware())
@@ -2498,6 +2506,8 @@ class Command(BaseCommand):
         socket.getaddrinfo = _ipv4_only_getaddrinfo
 
         async def run():
+            configure_observability()
+            init_telemetry()
             bots = [Bot(token=token) for token in BOT_TOKENS]
             try:
                 identities = await asyncio.gather(*(bot.get_me() for bot in bots))

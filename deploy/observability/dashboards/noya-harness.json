@@ -1,0 +1,1 @@
+{"title":"Noya Harness","schemaVersion":39,"panels":[{"type":"stat","title":"Runs started","targets":[{"expr":"noya_harness_runs_started"}]},{"type":"timeseries","title":"Step duration","targets":[{"expr":"noya_harness_step_duration_ms"}]},{"type":"timeseries","title":"Step failures","targets":[{"expr":"noya_harness_steps_failed"}]}]}

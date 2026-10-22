@@ -12,6 +12,7 @@ import re
 from typing import Any
 
 import httpx
+from botapp.observability.instrumentation import instrument_async
 
 from .registry import registry
 from .responses import sanitize_outgoing_text
@@ -100,6 +101,7 @@ def _parse_sse_stream(raw: str) -> dict | None:
     }
 
 
+@instrument_async("agent.loop")
 async def run_agent_loop(
     question: str,
     session_id: str,

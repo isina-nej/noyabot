@@ -1,0 +1,1 @@
+{"title":"Noya Diagnostics","schemaVersion":39,"panels":[{"type":"stat","title":"Diagnostic runs","targets":[{"expr":"noya_ops_diagnostic_runs"}]},{"type":"timeseries","title":"Telemetry queue/export errors","targets":[{"expr":"noya_otel_export_failures"}]},{"type":"stat","title":"Internal artifacts detected","targets":[{"expr":"noya_output_internal_artifacts_detected"}]}]}
