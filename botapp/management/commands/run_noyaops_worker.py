@@ -11,6 +11,7 @@ import time
 from django.core.management.base import BaseCommand
 
 from botapp.observability.diagnostics import execute_next
+from botapp.observability.store import write_heartbeat
 
 logger = logging.getLogger(__name__)
 
@@ -26,6 +27,10 @@ class Command(BaseCommand):
         pause = max(0.25, min(float(options["poll_seconds"]), 30.0))
         try:
             while True:
+                try:
+                    write_heartbeat("diagnostics-worker")
+                except Exception:
+                    pass
                 try:
                     worked = execute_next()
                 except Exception as exc:
