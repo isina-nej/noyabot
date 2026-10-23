@@ -304,16 +304,16 @@ async def run_ai_with_memory(
             await sync_to_async(observe_affect, thread_sensitive=True)(message)
             affect = await sync_to_async(get_affect_context, thread_sensitive=True)(uid)
             enriched += (
-                "\\n\\n[AFFECT_CONTEXT]\\n"
+                "\n\n[AFFECT_CONTEXT]\n"
                 + json.dumps(affect, ensure_ascii=False, separators=(",", ":"))
-                + "\\n[/AFFECT_CONTEXT]"
+                + "\n[/AFFECT_CONTEXT]"
             )
             lore = await sync_to_async(fetch_persona_facts, thread_sensitive=True)(question)
             if lore:
                 enriched += (
-                    "\\n\\n[PERSONA_LORE]\\n"
+                    "\n\n[PERSONA_LORE]\n"
                     + json.dumps(lore, ensure_ascii=False, separators=(",", ":"))
-                    + "\\n[/PERSONA_LORE]"
+                    + "\n[/PERSONA_LORE]"
                 )
     except Exception as exc:
         # During rolling deploys, the migration may not have been applied.
