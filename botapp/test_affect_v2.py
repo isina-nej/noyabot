@@ -72,6 +72,12 @@ class GlobalAffectPersistenceTests(TestCase):
         self.assertGreater(profile.scores["hurt"], 0)
         self.assertEqual(len(profile.processed_message_keys), 2)
 
+    def test_neutral_on_new_user_does_not_allocate_emotion_record(self):
+        self.assertIsNone(observe_affect(_msg("نویا، قیمت امروز چنده؟", user=333)))
+        self.assertFalse(NoyaAffectProfile.objects.filter(
+            user__telegram_user_id=333
+        ).exists())
+
     def test_duplicate_and_neutral_do_not_update_scores_or_timestamp(self):
         event = _msg("نویا مرسی", msg=1)
         observe_affect(event)
