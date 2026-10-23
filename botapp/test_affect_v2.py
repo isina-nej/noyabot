@@ -85,6 +85,10 @@ class GlobalAffectPersistenceTests(TestCase):
         self.assertEqual(profile.last_affective_at, at)
         self.assertEqual(len(profile.processed_message_keys), 1)
 
+    def test_lookalike_username_not_treated_as_noya_mention(self):
+        self.assertFalse(addressed_to_noya(_msg("@noya_impersonator دوستت دارم")))
+        self.assertTrue(addressed_to_noya(_msg("@nuyarobot ممنون")))
+
     def test_mentioned_in_group_and_reply_to_bot_both_count(self):
         self.assertTrue(addressed_to_noya(_msg("نویا مرسی")))
         self.assertTrue(addressed_to_noya(_msg("دمت گرم", reply_bot=True)))
