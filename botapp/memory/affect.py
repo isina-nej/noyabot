@@ -60,6 +60,13 @@ def observe_affect(message) -> dict | None:
     text = str(getattr(message, "text", None) or getattr(message, "caption", None) or "")
     if not text.strip():
         return None
+    # Most messages are neutral: avoid creating a profile or writing DB rows.
+    # The one adult-gated cue can only be evaluated after loading a profile.
+    prelim = classify_multi(text, addressed=True, adult_confirmed=False)
+    norm = normalize(text)
+    gated_cue = "برام جذابی" in norm or "از نظر عاطفی جذبتم" in norm
+    if not prelim and not gated_cue:
+        return None
     person, _ = TelegramUser.objects.get_or_create(telegram_user_id=int(user_id))
     profile, _ = NoyaAffectProfile.objects.get_or_create(user=person)
     profile = NoyaAffectProfile.objects.select_for_update().get(pk=profile.pk)
