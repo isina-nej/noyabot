@@ -109,3 +109,11 @@ def fetch_persona_facts(question: str) -> list[dict]:
     hits.sort(key=lambda item: (-item[0], item[1].key))
     return [{"key": fact.key, "fictional": True, "story": fact.value[:800]}
             for _, fact in hits[:3]]
+
+
+def delete_person_affect(user_id: int) -> int:
+    """Forget the global emotion vector across chats for this user."""
+    deleted, _ = NoyaAffectProfile.objects.filter(
+        user__telegram_user_id=int(user_id)
+    ).delete()
+    return deleted
