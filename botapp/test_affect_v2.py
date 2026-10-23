@@ -36,6 +36,21 @@ class MultiAffectPureTests(SimpleTestCase):
         self.assertGreater(output["love"], BASELINES["love"])
         self.assertGreater(output["hurt"], BASELINES["hurt"])
 
+    def test_a_user_distrusting_noya_reduces_trust_not_increases_it(self):
+        original = zero_vector()
+        event = classify_multi("نویا بهت اعتماد ندارم", addressed=True)
+        result = evolve(original, event)
+        self.assertLess(result["trust"], original["trust"])
+        self.assertGreater(result["distrust"], original["distrust"])
+
+    def test_external_hatred_does_not_make_noya_mirror_hate_or_contempt(self):
+        original = zero_vector()
+        event = classify_multi("نویا ازت متنفرم", addressed=True)
+        result = evolve(original, event)
+        self.assertEqual(result["hatred"], original["hatred"])
+        self.assertGreater(result["hurt"], original["hurt"])
+        self.assertLess(result["trust"], original["trust"])
+
     def test_neutral_message_alters_zero_emotion_scores_even_after_time(self):
         original = evolve(zero_vector(), {"hurt": 12., "love": 10.})
         self.assertEqual(evolve(original, {}, hours_since_previous=720), original)
