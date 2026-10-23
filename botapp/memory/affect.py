@@ -13,7 +13,7 @@ from django.utils import timezone
 from botapp.affect import classify_multi, context, evolve, normalize, zero_vector
 from botapp.models import NoyaAffectProfile, NoyaPersonaFact, TelegramUser
 
-NOYA_MENTION_RE = re.compile(r"(?<!\\w)نویا(?!\\w)|(?<!\\w)@(?:nuyarobot|nuya|noya)(?!\\w)", re.I)
+NOYA_MENTION_RE = re.compile(r"(?<!\w)نویا(?!\w)|(?<!\w)@(?:nuyarobot|nuya|noya)(?!\w)", re.I)
 PERSONA_HINT_RE = re.compile(
     r"سن|چند سال|تولد|متولد|تحصیل|رشته|دانشگاه|خاطره|کودکی|"
     r"گذشته|تروما|دراما|درام|قهر|دلتنگی|رفیق|دوستی|علاقه|"
