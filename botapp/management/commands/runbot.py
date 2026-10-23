@@ -1850,7 +1850,8 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     from botapp.agent.parser import is_message_analysis_request
     is_analysis = is_message_analysis_request(ask)
 
-    if not is_analysis:
+    model_first = os.getenv("NOYA_MODEL_FIRST_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+    if not model_first and not is_analysis:
         img_prompt = extract_image_prompt(ask)
         if img_prompt and not images:
             await _handle_noya_image_generation(message, img_prompt)
@@ -1895,16 +1896,19 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         except Exception:
             logger.info("jev_media_fail_open chat=%s", message.chat.id)
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    answer, agent_metadata = await run_ai_with_memory(
-        message,
-        payload,
-        call_noya_api,
-        session_id=f"telegram:{message.chat.id}",
-        images=images or None,
-    )
+    from botapp.agent.model_runtime import telegram_turn
+    # Bind all model-selected side effects to this exact Telegram update.
+    with telegram_turn(message, images):
+        answer, agent_metadata = await run_ai_with_memory(
+            message,
+            payload,
+            call_noya_api,
+            session_id=f"telegram:{message.chat.id}",
+            images=images or None,
+        )
     t_reply = monotonic()
     # Message analysis requests MUST always yield textual response; never photo/voice or action
-    if is_analysis:
+    if is_analysis and not model_first:
         await reply_noya_answer(message, answer)
         return
     # --- Agent tool results (image/TTS from agent loop) ---
@@ -1921,7 +1925,7 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             await reply_noya_answer(message, clean_answer)
     else:
         # --- Legacy ACTION dispatch (fallback for non-agent mode) ---
-        handled = await _dispatch_ai_action(message, answer or "", images=images)
+        handled = False if model_first else await _dispatch_ai_action(message, answer or "", images=images)
         if not handled:
             await reply_noya_answer(message, answer)
     logger.info(

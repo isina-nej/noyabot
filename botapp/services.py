@@ -249,11 +249,13 @@ async def call_noya_api(
         "[NOYA-TIMING] ▶ START call_noya_api session=%s speaker_id=%s question=%r agent=%s",
         session_id, speaker_user_id, (question or "")[:60], use_agent,
     )
+    model_first = os.getenv("NOYA_MODEL_FIRST_ENABLED", "true").strip().lower() in ("1", "true", "yes", "on")
+    # Model-first mode delegates ALL conversation intent decisions to the model.
     # ── Precedence: Search / URL intent overrides clock short-circuit ──
     from botapp.web import resolve_search_intent, SearchDecision
     decision, _ = resolve_search_intent(question or "")
 
-    if decision != SearchDecision.MUST_SEARCH and is_clock_question(question):
+    if not model_first and decision != SearchDecision.MUST_SEARCH and is_clock_question(question):
         dt = (monotonic() - t0) * 1000
         logger.info("[NOYA-TIMING] ⏱ Clock direct response in %.1fms", dt)
         return format_clock_reply(), {}
@@ -270,6 +272,8 @@ async def call_noya_api(
             system_prompt=system_prompt,
             speaker_user_id=speaker_user_id,
             speaker_name=speaker_name,
+            images=images,
+            model_first=model_first,
         )
         # Outbound gate: provider planning annotations must never be delivered.
         from botapp.agent.responses import sanitize_outgoing_text

@@ -131,7 +131,12 @@ async def _generate_image(prompt: str = "") -> str:
     # Store raw bytes for runbot to pick up, return text for LLM
     import base64
     _b64 = base64.b64encode(img_bytes).decode()
-    _IMAGE_RESULT_CACHE["last"] = _b64
+    from .model_runtime import current_turn
+    turn = current_turn()
+    if turn is not None:
+        turn.image_result = img_bytes
+    else:
+        _IMAGE_RESULT_CACHE["last"] = _b64
     return f"تصویر با موفقیت تولید شد ({len(img_bytes)} bytes). در حال ارسال..."
 
 
@@ -140,7 +145,12 @@ async def _text_to_speech(text: str = "") -> str:
     audio = await generate_noya_tts(text)
     if not audio:
         return "خطا در تولید صدا."
-    _TTS_RESULT_CACHE["last"] = audio
+    from .model_runtime import current_turn
+    turn = current_turn()
+    if turn is not None:
+        turn.audio_result = audio
+    else:
+        _TTS_RESULT_CACHE["last"] = audio
     return f"صدا با موفقیت تولید شد ({len(audio)} bytes). در حال ارسال..."
 
 
