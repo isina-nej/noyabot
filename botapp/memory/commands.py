@@ -6,6 +6,7 @@ from django.conf import settings
 from .deletion import forget_memories
 from .integration import get_or_create_memory_conversation, list_user_memories
 from .relationship import delete_all_relationship_states
+from .affect import delete_person_affect
 
 logger = logging.getLogger("botapp.memory")
 
@@ -83,4 +84,9 @@ async def forget_all_command(message, confirmation: str):
     relationship_count = await sync_to_async(delete_all_relationship_states, thread_sensitive=True)(
         int(message.from_user.id),
     )
-    await message.reply(f"{count} حافظه و {relationship_count} سابقهٔ رابطه حذف شد.")
+    affect_count = await sync_to_async(delete_person_affect, thread_sensitive=True)(
+        int(message.from_user.id),
+    )
+    await message.reply(
+        f"{count} حافظه، {relationship_count} سابقهٔ رابطه و {affect_count} پروفایل احساسی حذف شد."
+    )

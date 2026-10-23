@@ -622,6 +622,34 @@ class NoyaRelationshipState(models.Model):
         ]
 
 
+class NoyaAffectProfile(models.Model):
+    """One affective style vector per verified Telegram identity across chats.
+
+    This is not the privacy-scoped autobiographical memory. No message text is
+    persisted. Neutral messages do not alter the vector or its timestamp.
+    """
+    user = models.OneToOneField(
+        TelegramUser, on_delete=models.CASCADE, related_name="noya_affect_profile",
+    )
+    scores = models.JSONField(default=dict, blank=True)
+    processed_message_keys = models.JSONField(default=list, blank=True)
+    last_affective_at = models.DateTimeField(null=True, blank=True)
+    # Age verification is a privileged setting; never inferred from chat prose.
+    adult_confirmed = models.BooleanField(default=False)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
+class NoyaPersonaFact(models.Model):
+    """Curated, explicitly fictional character lore, retrieved only on demand."""
+    key = models.SlugField(max_length=80, unique=True)
+    category = models.CharField(max_length=32, db_index=True)
+    triggers = models.JSONField(default=list, blank=True)
+    value = models.TextField(max_length=1200)
+    fictional = models.BooleanField(default=True)
+    enabled = models.BooleanField(default=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+
 class NoyaRelationshipEvent(models.Model):
     """Deduplicated social events feeding a relationship state."""
 

@@ -199,7 +199,7 @@ def ops_auth_failure(reason: str = "unauthorized"):
 
 
 def ops_rate_limited(scope: str):
-    _safe(m.inc, m.OPS_RATE_LIMITED, scope=_scope(scope))
+    _safe(m.inc, m.OPS_RATE_LIMITED, scope=_label(scope))
 
 
 def ops_diagnostic_run(*, test_id: str, group: str, outcome: str):

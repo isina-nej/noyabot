@@ -294,6 +294,30 @@ async def run_ai_with_memory(
     t1 = time.perf_counter()
     enriched = append_memory_context(question, context.text)
     relationship = await _relationship_context_for_message(message)
+    # Global per-person affect, independent of chat/thread, with per-message
+    # idempotence because the outer middleware also observes addressed updates.
+    # Fail open: emotions must never interrupt the reply pipeline.
+    try:
+        from botapp.memory.affect import observe_affect, get_affect_context, fetch_persona_facts
+        uid, _ = _speaker_from_message(message)
+        if uid is not None:
+            await sync_to_async(observe_affect, thread_sensitive=True)(message)
+            affect = await sync_to_async(get_affect_context, thread_sensitive=True)(uid)
+            enriched += (
+                "\n\n[AFFECT_CONTEXT]\n"
+                + json.dumps(affect, ensure_ascii=False, separators=(",", ":"))
+                + "\n[/AFFECT_CONTEXT]"
+            )
+            lore = await sync_to_async(fetch_persona_facts, thread_sensitive=True)(question)
+            if lore:
+                enriched += (
+                    "\n\n[PERSONA_LORE]\n"
+                    + json.dumps(lore, ensure_ascii=False, separators=(",", ":"))
+                    + "\n[/PERSONA_LORE]"
+                )
+    except Exception as exc:
+        # During rolling deploys, the migration may not have been applied.
+        emotion_persistence_failure(type(exc).__name__)
     if relationship:
         enriched = (
             f"{enriched}\n\n[RELATIONSHIP_CONTEXT]\n"

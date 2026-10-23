@@ -28,6 +28,8 @@ from botapp.models import (
     MemoryItem,
     MemorySource,
     MemoryLifecycleEvent,
+    NoyaAffectProfile,
+    NoyaPersonaFact,
 )
 
 
@@ -418,3 +420,43 @@ class ModerationLogAdmin(admin.ModelAdmin):
         "duration_minutes",
         "created_at",
     )
+
+
+@admin.register(NoyaAffectProfile)
+class NoyaAffectProfileAdmin(admin.ModelAdmin):
+    list_display = ("user", "last_affective_at", "updated_at")
+    search_fields = ("=user__telegram_user_id",)
+    readonly_fields = ("user", "scores", "processed_message_keys",
+                       "last_affective_at", "updated_at")
+    list_per_page = 50
+
+    def has_add_permission(self, request):
+        return False
+
+    def has_change_permission(self, request, obj=None):
+        return bool(request.user.is_superuser)
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(request.user.is_superuser)
+
+
+@admin.register(NoyaPersonaFact)
+class NoyaPersonaFactAdmin(admin.ModelAdmin):
+    list_display = ("key", "category", "fictional", "enabled", "updated_at")
+    list_filter = ("category", "enabled")
+    search_fields = ("key", "value")
+    # Persona history is authored by trusted administrators; not user memory.
+    def has_module_permission(self, request):
+        return bool(request.user.is_superuser)
+
+    def has_view_permission(self, request, obj=None):
+        return bool(request.user.is_superuser)
+
+    def has_add_permission(self, request):
+        return bool(request.user.is_superuser)
+
+    def has_change_permission(self, request, obj=None):
+        return bool(request.user.is_superuser)
+
+    def has_delete_permission(self, request, obj=None):
+        return bool(request.user.is_superuser)

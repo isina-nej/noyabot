@@ -307,6 +307,14 @@ class ArchiveMiddleware(BaseMiddleware):
                 await sync_to_async(activity.record_message_activity, thread_sensitive=True)(event)
             except Exception:  # activity must never break message handling
                 logger.debug("activity counter failed", exc_info=True)
+            # Passive affect observation for *any addressed update* delivered by
+            # Telegram, even when the AI chat handler doesn't answer.
+            # No access is possible to unrelated third-party private chats.
+            try:
+                from botapp.memory.affect import observe_affect
+                await sync_to_async(observe_affect, thread_sensitive=True)(event)
+            except Exception:
+                logger.debug("affect observation unavailable", exc_info=True)
             if message_archive.archive_enabled():
                 try:
                     await sync_to_async(message_archive.archive_message, thread_sensitive=True)(event)
