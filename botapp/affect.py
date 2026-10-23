@@ -127,15 +127,43 @@ def classify_multi(text: str, *, addressed: bool, adult_confirmed: bool = False)
     return out
 
 
+# Cross-effects: incoming messages are *evidence* about the relationship,
+# not an instruction for Noya to mirror a speaker's hatred or jealousy.
+# A user saying "I don't trust you" should lower trust, not raise Noya trust.
+# The mappings are heuristic, bounded interaction mechanics.
+APPRAISAL_CROSS_EFFECTS = {
+    "love": {"affection": .35, "closeness": .25, "security": .10},
+    "gratitude": {"affection": .30, "trust": .12},
+    "admiration": {"respect": .20, "closeness": .12},
+    "distrust": {"trust": -.90, "security": -.65, "hurt": .30},
+    "suspicion": {"trust": -.55, "security": -.35},
+    "hatred": {"hurt": .75, "trust": -.85, "security": -.60},
+    "contempt": {"hurt": .65, "trust": -.60},
+    "anger": {"hurt": .40, "trust": -.30},
+    "disgust": {"hurt": .45, "security": -.40},
+    "hurt": {"trust": -.25, "security": -.20},
+    "guilt": {"empathy": .40, "trust": .20, "hurt": -.30},
+    "shame": {"empathy": .30, "hurt": -.20},
+    "empathy": {"security": .12, "closeness": .10},
+}
+NO_MIRROR = {"hatred", "contempt", "jealousy", "fear", "guilt", "shame", "pity"}
+
+
 def evolve(vector: dict | None, signals: dict[str, float], *, confidence: float = 1.,
            hours_since_previous: float = 0.) -> dict[str, float]:
     """Bounded context-sensitive update; neutral input never moves any score."""
     current = {k: max(0., min(100., float((vector or {}).get(k, BASELINES[k]))))
                for k in AFFECT_KEYS}
-    valid = {k: max(0., min(20., float(v))) for k, v in signals.items()
-             if k in BASELINES and isinstance(v, (int, float)) and math.isfinite(float(v)) and v > 0}
-    if not valid:
+    observed = {k: max(0., min(20., float(v))) for k, v in signals.items()
+                if k in BASELINES and isinstance(v, (int, float)) and math.isfinite(float(v)) and v > 0}
+    if not observed:
         return current
+    # Multi-label appraisal is directional. The speaker's contempt, jealousy,
+    # fear, shame or guilt must not be blindly copied as Noya's own emotion.
+    valid = {k: v for k, v in observed.items() if k not in NO_MIRROR}
+    for source, magnitude in observed.items():
+        for target, coefficient in APPRAISAL_CROSS_EFFECTS.get(source, {}).items():
+            valid[target] = valid.get(target, 0.) + magnitude * coefficient
     conf = max(0., min(1., float(confidence)))
     if conf == 0:
         return current
@@ -149,10 +177,13 @@ def evolve(vector: dict | None, signals: dict[str, float], *, confidence: float 
         current[key] = BASELINES[key] + (current[key] - BASELINES[key]) * decay
     for key, magnitude in valid.items():
         old = current[key]
-        # Soft saturation: 5 at low score > 5 at high score.
-        # The same signal can coexist with an opposing dimension.
-        delta = magnitude * conf * (0.40 + 0.60 * (100. - old) / 100.)
-        current[key] = min(100., old + delta)
+        # Soft saturation for both rising and falling score trajectories.
+        # Multiple opposed cues coexist rather than cancelling other labels.
+        if magnitude > 0:
+            delta = magnitude * conf * (0.40 + 0.60 * (100. - old) / 100.)
+        else:
+            delta = magnitude * conf * (0.40 + 0.60 * old / 100.)
+        current[key] = max(0., min(100., old + delta))
     return {k: round(v, 2) for k, v in current.items()}
 
 
