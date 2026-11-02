@@ -12,3 +12,5 @@ python-dotenv==1.2.2
 # Extract text from supported documents sent to Noya.
 pypdf>=5,<7
 python-docx>=1.1,<2
+# Renders Telegram Lottie (.tgs) stickers as vision frames in an isolated worker.
+rlottie-python==1.1.6
