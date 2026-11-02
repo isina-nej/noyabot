@@ -210,6 +210,12 @@ async def collect_noya_images(bot, message, *, include_reply: bool = True) -> li
             item = {"mime": mime, "data": data, "source": source}
             if len(frames) > 1:
                 item.update({"frame_index": index + 1, "frame_count": len(frames)})
+            elif (
+                getattr(msg, "animation", None) is not None
+                or bool(getattr(getattr(msg, "sticker", None), "is_animated", False))
+                or bool(getattr(getattr(msg, "sticker", None), "is_video", False))
+            ):
+                item["animation_preview_only"] = True
             out.append(item)
 
     await _add("message", message)
