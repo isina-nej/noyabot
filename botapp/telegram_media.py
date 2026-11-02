@@ -1,12 +1,13 @@
-"""Download Telegram photos/stickers and normalize them for vision models.
+"""Bounded Telegram vision intake for photos, animated GIFs and stickers.
 
-Static stickers are WebP; animated/video stickers are converted via their
-thumbnail (PhotoSize) when the full file cannot be decoded as a still image.
+Animated formats are sampled at start/middle/end and passed to vision as
+chronological JPEG frames; thumbnails remain the last-resort fallback.
 """
 
 from __future__ import annotations
 
 import base64
+import hashlib
 import io
 import logging
 from typing import Any
@@ -62,11 +63,14 @@ def to_data_url(mime: str, data: bytes) -> str:
 async def _download_file_bytes(bot, file_id: str) -> bytes | None:
     try:
         file = await bot.get_file(file_id)
+        if int(getattr(file, "file_size", 0) or 0) > 20_000_000:
+            return None
         buf = io.BytesIO()
         await bot.download_file(file.file_path, destination=buf)
-        return buf.getvalue()
+        result = buf.getvalue()
+        return result if len(result) <= 20_000_000 else None
     except Exception:
-        logger.exception("Failed to download Telegram file_id=%s", file_id)
+        logger.warning("Telegram media download failed", exc_info=True)
         return None
 
 
@@ -90,62 +94,104 @@ async def image_bytes_from_photo_size(bot, photo_size) -> tuple[str, bytes] | No
         return None
 
 
-async def image_bytes_from_sticker(bot, sticker) -> tuple[str, bytes] | None:
-    """Convert a sticker to a still image (WebP/PNG/JPEG).
+async def _animated_frames(raw: bytes, *, kind: str) -> list[tuple[str, bytes]]:
+    from botapp.animated_media import sample_animation_frames
 
-    Animated (.tgs) and video (.webm) stickers fall back to ``sticker.thumbnail``.
-    """
-    is_animated = bool(getattr(sticker, "is_animated", False))
-    is_video = bool(getattr(sticker, "is_video", False))
-    candidates: list[str] = []
-    if not is_animated and not is_video:
-        candidates.append(sticker.file_id)
+    try:
+        return await sample_animation_frames(raw, kind=kind)
+    except (RuntimeError, ValueError, OSError):
+        logger.warning("Failed to render Telegram animation kind=%s; using fallback", kind)
+        return []
+
+
+async def image_frames_from_sticker(bot, sticker) -> list[tuple[str, bytes]]:
+    """Render all sampled frames of a Telegram sticker with thumbnail fallback."""
+    animated = bool(getattr(sticker, "is_animated", False))
+    video = bool(getattr(sticker, "is_video", False))
+    full = await _download_file_bytes(bot, sticker.file_id)
+    if full:
+        if animated or video:
+            rendered = await _animated_frames(full, kind="tgs" if animated else "video")
+            if rendered:
+                return rendered
+        else:
+            try:
+                return [normalize_image_bytes(full)]
+            except Exception:
+                logger.debug("Static sticker image could not be decoded")
     thumb = getattr(sticker, "thumbnail", None) or getattr(sticker, "thumb", None)
     if thumb is not None and getattr(thumb, "file_id", None):
-        candidates.append(thumb.file_id)
-    # Last resort: try the sticker file even if marked animated (some are still webp).
-    if sticker.file_id not in candidates:
-        candidates.append(sticker.file_id)
-
-    for file_id in candidates:
-        raw = await _download_file_bytes(bot, file_id)
-        if not raw:
-            continue
-        try:
-            return normalize_image_bytes(raw)
-        except Exception:
-            logger.debug("Sticker file_id=%s not decodable as still image", file_id, exc_info=True)
-            continue
-    return None
+        raw_thumb = await _download_file_bytes(bot, thumb.file_id)
+        if raw_thumb:
+            try:
+                return [normalize_image_bytes(raw_thumb)]
+            except Exception:
+                logger.debug("Sticker thumbnail could not be decoded")
+    return []
 
 
-async def image_bytes_from_message(bot, message) -> tuple[str, bytes] | None:
-    """Extract one image from a message (photo, sticker, or image document)."""
+async def image_bytes_from_sticker(bot, sticker) -> tuple[str, bytes] | None:
+    """Backward-compatible single-frame interface for callers needing a still."""
+    frames = await image_frames_from_sticker(bot, sticker)
+    return frames[0] if frames else None
+
+
+async def image_frames_from_message(bot, message) -> list[tuple[str, bytes]]:
+    """Read a photo, sticker, Telegram animation or image document."""
     if message is None:
-        return None
+        return []
     photo = _largest_photo(message)
     if photo is not None:
-        return await image_bytes_from_photo_size(bot, photo)
+        got = await image_bytes_from_photo_size(bot, photo)
+        return [got] if got else []
     sticker = getattr(message, "sticker", None)
     if sticker is not None:
-        return await image_bytes_from_sticker(bot, sticker)
+        return await image_frames_from_sticker(bot, sticker)
+    animation = getattr(message, "animation", None)
+    if animation is not None:
+        raw = await _download_file_bytes(bot, animation.file_id)
+        if raw:
+            mime = (getattr(animation, "mime_type", None) or "").lower()
+            filename = (getattr(animation, "file_name", None) or "").lower()
+            kind = "image" if mime == "image/gif" or filename.endswith(".gif") else "video"
+            frames = await _animated_frames(raw, kind=kind)
+            if frames:
+                return frames
+            if kind == "image":
+                try:
+                    return [normalize_image_bytes(raw)]
+                except Exception:
+                    return []
+        return []
     document = getattr(message, "document", None)
     if document is not None:
         mime = (getattr(document, "mime_type", None) or "").lower()
-        if mime.startswith("image/"):
+        filename = (getattr(document, "file_name", None) or "").lower()
+        if mime.startswith("image/") or filename.endswith((".gif", ".webp", ".png", ".jpg", ".jpeg")):
             raw = await _download_file_bytes(bot, document.file_id)
             if raw:
+                if mime == "image/gif" or filename.endswith(".gif"):
+                    frames = await _animated_frames(raw, kind="image")
+                    if frames:
+                        return frames
                 try:
-                    return normalize_image_bytes(raw)
+                    return [normalize_image_bytes(raw)]
                 except Exception:
-                    logger.exception("Failed to normalize image document")
-    return None
+                    logger.warning("Image document could not be decoded")
+    return []
+
+
+async def image_bytes_from_message(bot, message) -> tuple[str, bytes] | None:
+    """Backward-compatible first frame for still-image call sites."""
+    frames = await image_frames_from_message(bot, message)
+    return frames[0] if frames else None
 
 
 async def collect_noya_images(bot, message, *, include_reply: bool = True) -> list[dict]:
-    """Collect up to MAX_IMAGES normalized images for the vision API.
+    """Collect up to three request-local images with temporal frame metadata.
 
-    Each item: ``{"mime": "image/jpeg", "data": b"...", "source": "message"|"reply"}``.
+    Animated Telegram media takes priority over images in the reply chain.
+    Each frame is a JPEG with an optional frame_index and frame_count.
     """
     out: list[dict] = []
     seen: set[str] = set()
@@ -153,21 +199,23 @@ async def collect_noya_images(bot, message, *, include_reply: bool = True) -> li
     async def _add(source: str, msg) -> None:
         if len(out) >= MAX_IMAGES or msg is None:
             return
-        got = await image_bytes_from_message(bot, msg)
-        if not got:
-            return
-        mime, data = got
-        digest = f"{mime}:{len(data)}:{data[:64]!r}"
-        if digest in seen:
-            return
-        seen.add(digest)
-        out.append({"mime": mime, "data": data, "source": source})
+        frames = await image_frames_from_message(bot, msg)
+        for index, (mime, data) in enumerate(frames):
+            if len(out) >= MAX_IMAGES:
+                break
+            digest = hashlib.sha256(data).hexdigest()
+            if digest in seen:
+                continue
+            seen.add(digest)
+            item = {"mime": mime, "data": data, "source": source}
+            if len(frames) > 1:
+                item.update({"frame_index": index + 1, "frame_count": len(frames)})
+            out.append(item)
 
     await _add("message", message)
     if include_reply:
-        await _add("reply", getattr(message, "reply_to_message", None))
-        # Parent of reply (one level) — useful when tagging on a reply chain.
         replied = getattr(message, "reply_to_message", None)
+        await _add("reply", replied)
         if replied is not None:
             await _add("reply_parent", getattr(replied, "reply_to_message", None))
     return out
