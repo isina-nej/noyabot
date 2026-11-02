@@ -47,6 +47,7 @@ def trusted_social_context(message) -> dict[str, bool]:
 
         recent_guest = recently_verified_sender(
             int(getattr(chat, "id", 0) or 0), guest_id,
+            thread_id=int(getattr(message, "message_thread_id", None) or 0),
         )
     guest_present = guest_speaker or guest_replied_to or bool(recent_guest)
     # In a private chat with anyone else, even a pasted or mentioned Batool
