@@ -649,6 +649,36 @@ class NoyaRelationshipEvent(models.Model):
             models.Index(fields=["created_at"]),
         ]
 
+class NoyaDialogueTurn(models.Model):
+    """Short, private per-speaker dialogue continuity (separate from factual memory).
+
+    Never shared across speakers, chats or topics. Identifiers originate from
+    authenticated Telegram envelopes, not model-generated text.
+    """
+
+    conversation = models.ForeignKey(
+        "MemoryConversation", on_delete=models.CASCADE, related_name="noya_dialogue_turns",
+    )
+    owner_user = models.ForeignKey(
+        "TelegramUser", on_delete=models.CASCADE, related_name="noya_dialogue_turns",
+    )
+    source_message_id = models.BigIntegerField()
+    role = models.CharField(max_length=12, choices=(("user", "User"), ("assistant", "Assistant")))
+    content = models.TextField()
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["conversation", "owner_user", "source_message_id", "role"],
+                name="noya_dialogue_unique_turn",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["conversation", "owner_user", "created_at"], name="noya_dialogue_scope_idx"),
+        ]
+
+
 class MemoryItem(models.Model):
     class Scope(models.TextChoices):
         USER = "user", "User global"
