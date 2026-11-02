@@ -2,6 +2,7 @@ import logging
 import re
 import time
 import json
+import inspect
 from collections.abc import Awaitable, Callable
 
 from asgiref.sync import sync_to_async
@@ -37,9 +38,13 @@ def _enabled(name: str, default: bool = True) -> bool:
 
 
 def should_process_memory(message) -> bool:
+    # Visual/audio Telegram updates often have no text or caption. They still
+    # carry an authenticated user and should retrieve their own memories.
     user = getattr(message, "from_user", None)
-    text = getattr(message, "text", None) or getattr(message, "caption", None)
-    return bool(user and not getattr(user, "is_bot", False) and text)
+    return bool(
+        user is not None and getattr(user, "id", None) is not None
+        and not getattr(user, "is_bot", False)
+    )
 
 
 def _thread_id(message) -> int:
@@ -293,6 +298,20 @@ async def run_ai_with_memory(
 
     t1 = time.perf_counter()
     enriched = append_memory_context(question, context.text)
+    speaker_user_id, speaker_name = _speaker_from_message(message)
+    conversation = None
+    if speaker_user_id is not None and _enabled("NOYA_DIALOGUE_ENABLED", True):
+        try:
+            from .dialogue import get_dialogue_history
+            conversation = await get_or_create_memory_conversation(message)
+            previous = await sync_to_async(get_dialogue_history, thread_sensitive=True)(
+                conversation, speaker_user_id,
+                exclude_message_id=int(getattr(message, "message_id", 0) or 0),
+            )
+            if previous:
+                enriched = f"{previous}\n\n{enriched}"
+        except Exception as exc:
+            logger.warning("Dialogue history unavailable: %s", type(exc).__name__)
     relationship = await _relationship_context_for_message(message)
     if relationship:
         enriched = (
@@ -300,25 +319,20 @@ async def run_ai_with_memory(
             f"{json.dumps(relationship, ensure_ascii=False, separators=(',', ':'))}\n"
             "[/RELATIONSHIP_CONTEXT]"
         )
-    speaker_user_id, speaker_name = _speaker_from_message(message)
+    # Match provider kwargs up front. Never retry an AI request merely because
+    # provider internals raised TypeError after performing a billable action.
+    kwargs = {"speaker_user_id": speaker_user_id, "speaker_name": speaker_name, "images": images}
     try:
-        answer = await provider(
-            enriched,
-            session_id,
-            speaker_user_id=speaker_user_id,
-            speaker_name=speaker_name,
-            images=images,
+        signature = inspect.signature(provider)
+        accepts_kwargs = any(
+            p.kind == inspect.Parameter.VAR_KEYWORD
+            for p in signature.parameters.values()
         )
-    except TypeError:
-        try:
-            answer = await provider(
-                enriched,
-                session_id,
-                speaker_user_id=speaker_user_id,
-                speaker_name=speaker_name,
-            )
-        except TypeError:
-            answer = await provider(enriched, session_id)
+        if not accepts_kwargs:
+            kwargs = {k: v for k, v in kwargs.items() if k in signature.parameters}
+    except (TypeError, ValueError):
+        pass
+    answer = await provider(enriched, session_id, **kwargs)
 
     # Handle tuple return from agent loop: (text, metadata)
     agent_metadata = {}
@@ -330,6 +344,18 @@ async def run_ai_with_memory(
     if _successful_answer(answer):
         t2 = time.perf_counter()
         await record_processed_message(message)
+        if conversation is not None and speaker_user_id is not None:
+            try:
+                from .dialogue import remember_dialogue
+                raw = (getattr(message, "text", None) or getattr(message, "caption", None) or "").strip()
+                if not raw:
+                    raw = "[رسانه: ویس، عکس، ویدیو یا استیکر بدون کپشن]"
+                await sync_to_async(remember_dialogue, thread_sensitive=True)(
+                    conversation, speaker_user_id, int(getattr(message, "message_id", 0) or 0),
+                    raw, str(answer),
+                )
+            except Exception as exc:
+                logger.warning("Dialogue write failed: %s", type(exc).__name__)
         ingestion_ms = (time.perf_counter() - t2) * 1000
     
     total_handler_ms = (time.perf_counter() - start_total) * 1000
