@@ -347,6 +347,11 @@ def build_ai_messages(
         mime = (mime_value or detected or "").strip().lower()
         if mime not in _ALLOWED_MIMES or mime != detected:
             raise ValueError("Unsupported image or MIME/signature mismatch")
+        if img.get("animation_preview_only"):
+            vision_parts.append({
+                "type": "text",
+                "text": "فقط یک تصویر ثابت از انیمیشن موجود است؛ حرکت نامشخص را حدس نزن.",
+            })
         if img.get("frame_index"):
             vision_parts.append({
                 "type": "text",
