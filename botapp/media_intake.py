@@ -229,7 +229,7 @@ async def prepare_media_for_noya(bot, message, *, include_reply: bool = True) ->
                     prepared.warnings.append(f"فریم ویدیو قابل خواندن نبود: {exc}")
                 raw = await _ffmpeg(raw, frame=False)
                 suffix, mime = ".mp3", "audio/mpeg"
-            elif suffix in {".ogg", ".oga", ".wma", ".aac", ".opus"}:
+            elif suffix not in {".mp3", ".m4a", ".mp4", ".wav", ".flac", ".webm"}:
                 raw = await _ffmpeg(raw, frame=False)
                 suffix, mime = ".mp3", "audio/mpeg"
             transcript = await transcribe_audio(raw, suffix=suffix, mime=mime)
