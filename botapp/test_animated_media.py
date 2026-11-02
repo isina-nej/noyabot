@@ -103,6 +103,38 @@ class AnimatedVisionTest(SimpleTestCase):
         self.assertEqual(_frame_numbers(3), [0, 1, 2])
         self.assertEqual(_frame_numbers(60), [0, 29, 59])
 
+    def test_real_tgs_vector_is_rendered_to_jpeg_frames(self):
+        """Exercise the native renderer in a bounded child, not only a mock."""
+        simple = {
+            "v": "5.5.7", "fr": 30, "ip": 0, "op": 30,
+            "w": 64, "h": 64, "nm": "test", "ddd": 0, "assets": [],
+            "layers": [{
+                "ddd": 0, "ind": 1, "ty": 4, "nm": "rectangle", "sr": 1,
+                "ks": {
+                    "o": {"a": 0, "k": 100}, "r": {"a": 0, "k": 0},
+                    "p": {"a": 0, "k": [32, 32, 0]}, "a": {"a": 0, "k": [0, 0, 0]},
+                    "s": {"a": 0, "k": [100, 100, 100]},
+                },
+                "shapes": [
+                    {"ty": "gr", "it": [
+                        {"ty": "rc", "s": {"a": 0, "k": [32, 32]},
+                         "p": {"a": 0, "k": [0, 0]}, "r": {"a": 0, "k": 0}},
+                        {"ty": "fl", "c": {"a": 0, "k": [1, 0, 0, 1]},
+                         "o": {"a": 0, "k": 100}, "r": 1},
+                        {"ty": "tr", "p": {"a": 0, "k": [0, 0]},
+                         "a": {"a": 0, "k": [0, 0]},
+                         "s": {"a": 0, "k": [100, 100]},
+                         "r": {"a": 0, "k": 0}, "o": {"a": 0, "k": 100}},
+                    ]}
+                ],
+                "ip": 0, "op": 30, "st": 0, "bm": 0,
+            }],
+        }
+        raw = gzip.compress(json.dumps(simple).encode())
+        frames = async_to_sync(sample_animation_frames)(raw, kind="tgs")
+        self.assertEqual(len(frames), 3)
+        self.assertTrue(all(blob.startswith(b"\\xff\\xd8") for _, blob in frames))
+
     def test_tgs_gzip_bomb_rejected_before_native_renderer(self):
         oversized = gzip.compress(b"a" * 1_200_000)
         with self.assertRaises(ValueError):
