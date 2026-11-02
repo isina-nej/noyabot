@@ -22,9 +22,13 @@ def retrieve_memories(user_id: int, conversation: MemoryConversation, query: str
             continue
         haystack = f"{item.content} {item.category}".casefold()
         score = sum(1 for term in terms if term in haystack)
-        if score or not terms:
-            score += {"critical": 100, "important": 50, "moderately_important": 10, "unimportant": 0}.get(item.importance, 0)
-            score += 1 if item.conversation_id == conversation.id else 0
+        # Explicit important facts should remain recallable despite synonyms.
+        important = item.is_explicit or item.importance in {"critical", "important"}
+        if score or not terms or important:
+            score = score * 100
+            score += {"critical": 90, "important": 45, "moderately_important": 10, "unimportant": 0}.get(item.importance, 0)
+            score += 10 if item.is_explicit else 0
+            score += 2 if item.conversation_id == conversation.id else 0
             scored.append((score, item))
     scored.sort(key=lambda pair: (pair[0], pair[1].updated_at), reverse=True)
     items = [item for _, item in scored[:max(limit, 0)]]
