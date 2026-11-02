@@ -2301,7 +2301,16 @@ async def check_message(message: Message, bot: Bot):
     group = await get_or_create_group_settings(message.chat.id, message.chat.title or "")
     if await process_moderation(message, bot, group):
         return
-
+    if group.collaboration_enabled and not getattr(message, "edit_date", None):
+        from botapp.ambient import should_join_group_conversation
+        if should_join_group_conversation(message):
+            # Opt-in social participation still honors ordinary group quotas.
+            await _answer_noya_chat(
+                message,
+                "در واکنش به این صحبت به شکل طبیعی و کوتاه وارد گفتگو شو: "
+                + (message.text or "")[:350],
+                use_quota=True,
+            )
 
 
 async def safe_delete(message: Message):
