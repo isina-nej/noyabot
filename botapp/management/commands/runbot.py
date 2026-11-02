@@ -2182,7 +2182,7 @@ def _is_noya_image_document(message: Message) -> bool:
     return mime.startswith("image/")
 
 
-@router.message(F.photo | F.sticker | F.document | F.voice | F.audio | F.video | F.video_note)
+@router.message(F.photo | F.sticker | F.animation | F.document | F.voice | F.audio | F.video | F.video_note)
 async def handle_media_noya_message(message: Message, bot: Bot):
     """Route photos, audio, video, and supported files to one bounded AI intake."""
 
@@ -2193,6 +2193,8 @@ async def handle_media_noya_message(message: Message, bot: Bot):
         default_ask = "این صدا را گوش کن، گفتارش را بخوان و درباره محتوایش توضیح بده."
     elif message.video or message.video_note:
         default_ask = "این ویدیو را از روی تصویر و گفتار قابل استخراج تحلیل کن."
+    elif message.animation or (message.sticker and (message.sticker.is_animated or message.sticker.is_video)):
+        default_ask = "فریم‌های این انیمیشن به ترتیب زمان هستند؛ حرکت، اتفاق و احساس منتقل‌شده را توضیح بده."
     elif message.document and not _is_noya_image_document(message):
         default_ask = "این فایل را بخوان و محتوایش را خلاصه کن."
     else:
