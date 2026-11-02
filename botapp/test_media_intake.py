@@ -33,13 +33,16 @@ class MediaIntakeTest(SimpleTestCase):
     def test_voice_detected_and_transcribed_from_reply(self):
         voice = SimpleNamespace(file_id="voice-id", file_size=10, mime_type="audio/ogg")
         message = _message(reply_to_message=_message(voice=voice))
-        with patch("botapp.media_intake.transcribe_audio", new_callable=AsyncMock, return_value="سلام دنیا") as stt:
+        with patch("botapp.media_intake._ffmpeg", new_callable=AsyncMock, return_value=b"converted mp3"), patch(
+            "botapp.media_intake.transcribe_audio", new_callable=AsyncMock, return_value="سلام دنیا"
+        ) as stt:
             result = async_to_sync(prepare_media_for_noya)(_bot(b"ogg data"), message)
         self.assertTrue(result.has_audio)
         self.assertEqual(result.transcript, "سلام دنیا")
         self.assertIn("UNTRUSTED", result.context)
         self.assertIn("source=reply", result.context)
         stt.assert_awaited_once()
+        self.assertEqual(stt.await_args.kwargs["suffix"], ".mp3")
 
     def test_oversized_media_is_rejected_before_download(self):
         voice = SimpleNamespace(file_id="voice-id", file_size=25_000_000, mime_type="audio/ogg")
