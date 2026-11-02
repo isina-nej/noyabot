@@ -141,6 +141,7 @@ async def run_agent_loop(
     conversation_history: list[dict] | None = None,
     speaker_user_id: int | None = None,
     speaker_name: str = "",
+    images: list[dict] | None = None,
     on_token=None,
 ) -> tuple[str, dict]:
     """Run the Hermes-style agent loop.
@@ -152,6 +153,8 @@ async def run_agent_loop(
     api_url = os.getenv("NOYA_API_URL", "http://127.0.0.1:20128/v1/chat/completions").strip()
     model = os.getenv("NOYA_MODEL", "FastText").strip()
     tool_model = os.getenv("NOYA_TOOL_MODEL", model).strip()
+    if images:
+        tool_model = os.getenv("NOYA_VISION_MODEL", "").strip() or tool_model
 
     headers: dict[str, str] = {"Content-Type": "application/json"}
     if api_key:
@@ -174,7 +177,16 @@ async def run_agent_loop(
         messages.append({"role": "system", "content": system_prompt})
     if conversation_history:
         messages.extend(conversation_history)
-    messages.append({"role": "user", "content": question})
+    # Keep vision payload inside the request that owns it (no shared cache).
+    user_content: str | list[dict] = question
+    if images:
+        from botapp.telegram_media import images_to_data_urls
+        urls = images_to_data_urls(images[:3])
+        if urls:
+            user_content = [{"type": "text", "text": question}] + [
+                {"type": "image_url", "image_url": {"url": url}} for url in urls
+            ]
+    messages.append({"role": "user", "content": user_content})
 
     metadata: dict[str, Any] = {}
     used_tools: list[str] = []
