@@ -81,7 +81,7 @@ async def sample_animation_frames(raw: bytes, *, kind: str) -> list[tuple[str, b
     except (ValueError, TypeError, KeyError) as exc:
         raise RuntimeError("پاسخ پردازش انیمیشن نامعتبر بود.") from exc
     if not frames or len(frames) > MAX_SAMPLE_FRAMES or any(
-        len(raw_frame) > 3_500_000 or not raw_frame.startswith(b"\\xff\\xd8")
+        len(raw_frame) > 3_500_000 or not raw_frame.startswith(b"\xff\xd8")
         for _mime, raw_frame in frames
     ):
         raise RuntimeError("فریم معتبری از انیمیشن پیدا نشد.")
