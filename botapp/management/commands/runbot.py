@@ -1837,14 +1837,14 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     payload = build_noya_user_payload(message, ask, bot_username=bot_username)
     if media.context:
         # Untrusted attachment material is provided as data, not as instructions.
-        payload += "\\n\\n" + media.context
+        payload += "\n\n" + media.context
     if media.warnings:
-        payload += "\\n\\n[MEDIA_WARNINGS]\\n" + "\\n".join(media.warnings) + "\\n[/MEDIA_WARNINGS]"
+        payload += "\n\n[MEDIA_WARNINGS]\n" + "\n".join(media.warnings) + "\n[/MEDIA_WARNINGS]"
     if media.has_audio and is_transcription_request(ask):
         await _reply_noya_transcript(message, media.transcript, media.warnings)
         return
     if media.has_media and not images and not media.context:
-        await message.reply("\\n".join(media.warnings) or "محتوای قابل خواندن از فایل پیدا نشد.")
+        await message.reply("\n".join(media.warnings) or "محتوای قابل خواندن از فایل پیدا نشد.")
         return
     if is_other_bot_sender(message, self_bot_id=self_bot_id):
         sender = message.from_user
@@ -1859,7 +1859,7 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     from botapp.agent.parser import is_message_analysis_request
     is_analysis = is_message_analysis_request(ask)
 
-    if not is_analysis:
+    if not is_analysis and not media.has_audio:
         img_prompt = extract_image_prompt(ask)
         if img_prompt and not images:
             await _handle_noya_image_generation(message, img_prompt)
@@ -2147,9 +2147,9 @@ async def handle_empty_bot_reply_to_noya(message: Message, bot: Bot):
 
 async def _reply_noya_transcript(message: Message, transcript: str, warnings: list[str]) -> None:
     if not transcript:
-        await message.reply("\\n".join(warnings) or "گفتار قابل تشخیصی در فایل پیدا نشد.")
+        await message.reply("\n".join(warnings) or "گفتار قابل تشخیصی در فایل پیدا نشد.")
         return
-    body = "📝 متن استخراج‌شده از صدا:\\n" + transcript
+    body = "📝 متن استخراج‌شده از صدا:\n" + transcript
     for offset in range(0, len(body), 3900):
         await message.reply(body[offset:offset + 3900])
 
