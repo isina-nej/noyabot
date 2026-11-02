@@ -133,7 +133,7 @@ class AnimatedVisionTest(SimpleTestCase):
         raw = gzip.compress(json.dumps(simple).encode())
         frames = async_to_sync(sample_animation_frames)(raw, kind="tgs")
         self.assertEqual(len(frames), 3)
-        self.assertTrue(all(blob.startswith(b"\\xff\\xd8") for _, blob in frames))
+        self.assertTrue(all(blob.startswith(b"\xff\xd8") for _, blob in frames))
 
     def test_tgs_gzip_bomb_rejected_before_native_renderer(self):
         oversized = gzip.compress(b"a" * 1_200_000)
