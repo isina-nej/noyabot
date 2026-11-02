@@ -185,6 +185,11 @@ async def run_agent_loop(
         if urls:
             user_content = [{"type": "text", "text": question}]
             for url, img in zip(urls, images[:3]):
+                if img.get("animation_preview_only"):
+                    user_content.append({
+                        "type": "text",
+                        "text": "فقط یک نمای ثابت از انیمیشن در دسترس است؛ درباره حرکت دیده‌نشده حدس نزن.",
+                    })
                 if img.get("frame_index"):
                     user_content.append({
                         "type": "text",
