@@ -241,6 +241,7 @@ async def call_noya_api(
     speaker_user_id: int | None = None,
     speaker_name: str = "",
     images: list[dict] | None = None,
+    social_context: dict | None = None,
     use_agent: bool = True,
 ) -> tuple[str, dict]:
     """Hermes-style: call agent loop with tools, fall back to direct API."""
@@ -271,6 +272,7 @@ async def call_noya_api(
             speaker_user_id=speaker_user_id,
             speaker_name=speaker_name,
             images=images,
+            social_context=social_context,
         )
         # Outbound gate: provider planning annotations must never be delivered.
         from botapp.agent.responses import sanitize_outgoing_text
@@ -284,7 +286,7 @@ async def call_noya_api(
         return reply or "پاسخی از هوش مصنوعی دریافت نشد.", metadata
 
     # ── Fallback: direct API call (old path) ──
-    return await _call_noya_api_direct(question, session_id, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images)
+    return await _call_noya_api_direct(question, session_id, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images, social_context=social_context)
 
 
 async def _call_noya_api_direct(
@@ -294,6 +296,7 @@ async def _call_noya_api_direct(
     speaker_user_id: int | None = None,
     speaker_name: str = "",
     images: list[dict] | None = None,
+    social_context: dict | None = None,
 ) -> tuple[str, dict]:
     """Legacy direct API path — no tool calling, single LLM call."""
     api_key = os.getenv("NOYA_API_KEY", "").strip()
@@ -315,7 +318,7 @@ async def _call_noya_api_direct(
         search_block = f"{search_block}\n\n{url_block}" if search_block else url_block
     payload = {
         "model": model, "stream": False,
-        "messages": build_ai_messages(question, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images, search_block=search_block),
+        "messages": build_ai_messages(question, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images, search_block=search_block, social_context=social_context),
     }
     t_ai = monotonic()
     ai_provider_request_begin(model)
