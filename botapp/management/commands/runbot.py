@@ -1818,12 +1818,10 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
                 f"گروه {message.chat.title or message.chat.id}، به پایان درخواست‌های روزانه خود رسیده است. با مدیریت آن تماس بگیرید."
             )
             return
-    images = []
-    try:
-        images = await collect_noya_images(message.bot, message)
-    except Exception:
-        logger.exception("Failed collecting Noya vision images chat=%s", message.chat.id)
-        images = []
+    from botapp.media_intake import prepare_media_for_noya, is_transcription_request
+
+    media = await prepare_media_for_noya(message.bot, message)
+    images = media.images
     ask = (question or "").strip()
     t_chat_start = monotonic()
     logger.info(
@@ -1837,6 +1835,17 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         ask = "این تصویر / استیکر را ببین و پاسخ بده."
     # Attach reply-chain + recent group chatter so Noya can read the chat/tag target.
     payload = build_noya_user_payload(message, ask, bot_username=bot_username)
+    if media.context:
+        # Untrusted attachment material is provided as data, not as instructions.
+        payload += "\\n\\n" + media.context
+    if media.warnings:
+        payload += "\\n\\n[MEDIA_WARNINGS]\\n" + "\\n".join(media.warnings) + "\\n[/MEDIA_WARNINGS]"
+    if media.has_audio and is_transcription_request(ask):
+        await _reply_noya_transcript(message, media.transcript, media.warnings)
+        return
+    if media.has_media and not images and not media.context:
+        await message.reply("\\n".join(media.warnings) or "محتوای قابل خواندن از فایل پیدا نشد.")
+        return
     if is_other_bot_sender(message, self_bot_id=self_bot_id):
         sender = message.from_user
         bot_label = (getattr(sender, "username", None) or getattr(sender, "full_name", None) or str(sender.id))
@@ -1887,7 +1896,7 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
                     logger.info("jev_media_fast chat=%s image conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
                     await _handle_noya_image_generation(message, _img_prompt)
                     return
-            elif _jev_verdict is not None and _jev_action == "image" and images:
+            elif _jev_verdict is not None and _jev_action == "image" and images and _is_image_edit_request(ask, True):
                 _edit_img = next((i for i in images if i.get("source") in ("reply", "reply_parent")), None) or images[0]
                 logger.info("jev_media_fast chat=%s image_edit conf=%.2f", message.chat.id, float(_jev_verdict.get("confidence") or 0.0))
                 await _handle_noya_image_edit(message, ask, _edit_img["data"], _edit_img.get("mime", "image/jpeg"))
@@ -2136,6 +2145,35 @@ async def handle_empty_bot_reply_to_noya(message: Message, bot: Bot):
     await noya_edit_coordinator.observe_empty_shell(message, reason="empty_bot_reply")
 
 
+async def _reply_noya_transcript(message: Message, transcript: str, warnings: list[str]) -> None:
+    if not transcript:
+        await message.reply("\\n".join(warnings) or "گفتار قابل تشخیصی در فایل پیدا نشد.")
+        return
+    body = "📝 متن استخراج‌شده از صدا:\\n" + transcript
+    for offset in range(0, len(body), 3900):
+        await message.reply(body[offset:offset + 3900])
+
+
+@router.message(Command("transcribe"))
+async def transcribe_command(message: Message, bot: Bot):
+    """Reply to a voice/audio/video with /transcribe; no LLM required."""
+    from botapp.media_intake import prepare_media_for_noya
+    if is_group_chat(message):
+        group = await get_or_create_group_settings(message.chat.id, message.chat.title or "")
+        if not group.collaboration_enabled:
+            return
+        if not await consume_group_quota(message.chat.id, message.chat.title or ""):
+            await message.reply("سهمیه روزانه گروه تمام شده است.")
+            return
+    elif not is_private_chat(message):
+        return
+    if not message.reply_to_message:
+        await message.reply("روی ویس، فایل صوتی یا ویدیو ریپلای کن و /transcribe بفرست.")
+        return
+    media = await prepare_media_for_noya(bot, message)
+    await _reply_noya_transcript(message, media.transcript, media.warnings)
+
+
 def _is_noya_image_document(message: Message) -> bool:
     doc = message.document
     if not doc:
@@ -2144,16 +2182,21 @@ def _is_noya_image_document(message: Message) -> bool:
     return mime.startswith("image/")
 
 
-@router.message(F.photo | F.sticker | F.document)
+@router.message(F.photo | F.sticker | F.document | F.voice | F.audio | F.video | F.video_note)
 async def handle_media_noya_message(message: Message, bot: Bot):
-    """Private/group photo & sticker input for Noya (stickers normalized to JPEG)."""
-    if message.sticker is None and message.photo is None and not _is_noya_image_document(message):
-        return
+    """Route photos, audio, video, and supported files to one bounded AI intake."""
 
     bot_info = await bot.me()
     bot_username = bot_info.username or ""
     caption = (message.caption or "").strip()
-    default_ask = "این تصویر / استیکر را ببین و پاسخ بده."
+    if message.voice or message.audio:
+        default_ask = "این صدا را گوش کن، گفتارش را بخوان و درباره محتوایش توضیح بده."
+    elif message.video or message.video_note:
+        default_ask = "این ویدیو را از روی تصویر و گفتار قابل استخراج تحلیل کن."
+    elif message.document and not _is_noya_image_document(message):
+        default_ask = "این فایل را بخوان و محتوایش را خلاصه کن."
+    else:
+        default_ask = "این تصویر / استیکر را ببین و پاسخ بده."
 
     if is_private_chat(message):
         question = _noya_question_from_text(caption, bot_username) or caption or default_ask
