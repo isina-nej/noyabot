@@ -62,6 +62,14 @@ def _attachment(message):
         name = str(getattr(obj, "file_name", "") or "")
         suffix = Path(name.lower()).suffix
         mime = str(getattr(obj, "mime_type", "") or "").lower().split(";", 1)[0]
+        if not suffix:
+            suffix = {
+                "audio/ogg": ".ogg", "audio/mpeg": ".mp3", "audio/mp4": ".m4a",
+                "audio/wav": ".wav", "audio/webm": ".webm",
+                "video/mp4": ".mp4", "video/webm": ".webm",
+                "application/pdf": ".pdf",
+                "application/vnd.openxmlformats-officedocument.wordprocessingml.document": ".docx",
+            }.get(mime, "")
         if kind == "document":
             if mime.startswith("image/"):
                 return None  # existing vision path handles image documents
@@ -221,7 +229,7 @@ async def prepare_media_for_noya(bot, message, *, include_reply: bool = True) ->
                     prepared.warnings.append(f"فریم ویدیو قابل خواندن نبود: {exc}")
                 raw = await _ffmpeg(raw, frame=False)
                 suffix, mime = ".mp3", "audio/mpeg"
-            elif suffix in {".wma", ".aac", ".opus"}:
+            elif suffix in {".ogg", ".oga", ".wma", ".aac", ".opus"}:
                 raw = await _ffmpeg(raw, frame=False)
                 suffix, mime = ".mp3", "audio/mpeg"
             transcript = await transcribe_audio(raw, suffix=suffix, mime=mime)
@@ -243,5 +251,5 @@ def is_transcription_request(text: str) -> bool:
     return any(phrase in t for phrase in (
         "تبدیل به متن", "تبدیلش به متن", "متن ویس", "متن صدا",
         "پیاده سازی", "پیاده‌سازی", "رونوشت", "transcribe", "transcription",
-        "صوت به متن", "ویس به متن", "ویدیو به متن",
+        "صوت به متن", "ویس به متن", "ویدیو به متن", "متن کن", "متنشو بنویس", "ویس رو بنویس",
     ))
