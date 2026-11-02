@@ -69,10 +69,18 @@ def remember_group_message(message) -> None:
         elif getattr(message, "sticker", None):
             emoji = getattr(message.sticker, "emoji", None) or ""
             text = f"[استیکر{(' ' + emoji) if emoji else ''}]"
-        elif getattr(message, "document", None) and (
-            (getattr(message.document, "mime_type", None) or "").startswith("image/")
-        ):
-            text = "[تصویر]"
+        elif getattr(message, "animation", None):
+            text = "[گیف / انیمیشن]"
+        elif getattr(message, "voice", None):
+            text = "[ویس]"
+        elif getattr(message, "audio", None):
+            text = "[فایل صوتی / موزیک]"
+        elif getattr(message, "video", None) or getattr(message, "video_note", None):
+            text = "[ویدیو]"
+        elif getattr(message, "document", None):
+            text = "[فایل]" if not (
+                (getattr(message.document, "mime_type", None) or "").startswith("image/")
+            ) else "[تصویر]"
         else:
             return
     chat = message.chat
