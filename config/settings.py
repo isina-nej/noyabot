@@ -108,6 +108,8 @@ MEMORY_MAX_CONTEXT_TOKENS = int(os.getenv("MEMORY_MAX_CONTEXT_TOKENS", "600"))
 NOYA_DIALOGUE_ENABLED = os.getenv("NOYA_DIALOGUE_ENABLED", "true").lower() in {"1", "true", "yes", "on"}
 NOYA_DIALOGUE_MAX_TURNS = int(os.getenv("NOYA_DIALOGUE_MAX_TURNS", "12"))
 NOYA_DIALOGUE_TTL_DAYS = int(os.getenv("NOYA_DIALOGUE_TTL_DAYS", "14"))
+# Ambient group replies are intentionally opt-in to avoid spam.
+NOYA_AMBIENT_REPLIES_ENABLED = os.getenv("NOYA_AMBIENT_REPLIES_ENABLED", "false").lower() in {"1","true","yes","on"}
 MEMORY_MAX_ITEMS_PER_SCOPE = int(os.getenv("MEMORY_MAX_ITEMS_PER_SCOPE", "200"))
 MEMORY_EXTRACTION_ENABLED = os.getenv("MEMORY_EXTRACTION_ENABLED", "true").lower() in {
     "1", "true", "yes", "on"
