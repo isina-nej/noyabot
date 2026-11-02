@@ -198,6 +198,19 @@ async def prepare_media_for_noya(bot, message, *, include_reply: bool = True) ->
     prepared = PreparedMedia()
     prepared.images = await collect_noya_images(bot, message, include_reply=include_reply)
     prepared.has_media = bool(prepared.images)
+    if not prepared.images:
+        # Do not allow the LLM to claim it viewed an undecodable animation.
+        candidates = [message]
+        if include_reply:
+            candidates.append(getattr(message, "reply_to_message", None))
+        for candidate in candidates:
+            if candidate is not None and (
+                getattr(candidate, "sticker", None) is not None
+                or getattr(candidate, "animation", None) is not None
+            ):
+                prepared.has_media = True
+                prepared.warnings.append("رندر استیکر یا GIF ناموفق بود؛ محتوای انیمیشن قابل مشاهده نیست.")
+                break
     source, found = "message", _attachment(message)
     if found is None and include_reply:
         source = "reply"
