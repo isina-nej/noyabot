@@ -15,11 +15,11 @@ from botapp.noya_social_roles import (
 
 
 def _msg(*, sender=99, chat_id=-100_999_848, chat_type="supergroup",
-         text="سلام نویا", replied=None, age_seconds=0, message_id=1):
+         text="سلام نویا", replied=None, age_seconds=0, message_id=1, thread=0):
     return SimpleNamespace(
         from_user=SimpleNamespace(id=sender, is_bot=False, full_name="Tester", first_name="Tester"),
         chat=SimpleNamespace(id=chat_id, type=chat_type, title="Group"),
-        message_id=message_id,
+        message_id=message_id, message_thread_id=thread,
         text=text, caption=None, reply_to_message=replied,
         date=datetime.now(timezone.utc) - timedelta(seconds=age_seconds),
         photo=None, sticker=None, animation=None, voice=None,
@@ -76,6 +76,14 @@ class VerifiedSocialRoleTests(SimpleTestCase):
         self.assertFalse(trusted_social_context(
             _msg(sender=1399836576, chat_type="private", chat_id=1399836576)
         )["batool_present"])
+
+    def test_participation_in_other_topic_does_not_count_as_presence(self):
+        guest = _msg(sender=1617351320, chat_id=-100_999_853, thread=11, message_id=35)
+        remember_group_message(guest)
+        other_topic = _msg(sender=1399836576, chat_id=-100_999_853, thread=12, message_id=36)
+        self.assertFalse(trusted_social_context(other_topic)["batool_present"])
+        same_topic = _msg(sender=1399836576, chat_id=-100_999_853, thread=11, message_id=37)
+        self.assertTrue(trusted_social_context(same_topic)["batool_present"])
 
     def test_stale_presence_and_text_only_mentions_do_not_activate(self):
         old = _msg(sender=1617351320, chat_id=-100_999_851, age_seconds=720, message_id=21)
