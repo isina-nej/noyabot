@@ -270,6 +270,7 @@ async def call_noya_api(
             system_prompt=system_prompt,
             speaker_user_id=speaker_user_id,
             speaker_name=speaker_name,
+            images=images,
         )
         # Outbound gate: provider planning annotations must never be delivered.
         from botapp.agent.responses import sanitize_outgoing_text
