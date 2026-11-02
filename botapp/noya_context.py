@@ -107,6 +107,7 @@ def _message_metadata(message, *, text: str | None = None) -> str:
     timestamp = date.isoformat() if hasattr(date, "isoformat") else (str(date) if date else None)
     fields = {
         "chat_id": int(getattr(chat, "id", 0) or 0),
+        "thread_id": int(getattr(message, "message_thread_id", None) or 0),
         "user_id": int(getattr(user, "id", 0) or 0) or None,
         "message_id": int(getattr(message, "message_id", 0) or 0) or None,
         "reply_to_message_id": int(getattr(replied, "message_id", 0) or 0) or None,
@@ -118,7 +119,8 @@ def _message_metadata(message, *, text: str | None = None) -> str:
 
 
 def recently_verified_sender(
-    chat_id: int, sender_id: int, *, max_age_seconds: int = 600, limit: int = 12,
+    chat_id: int, sender_id: int, *, thread_id: int = 0,
+    max_age_seconds: int = 600, limit: int = 12,
 ) -> bool:
     """Recent participation in this chat, proven by Telegram's sender ID.
 
@@ -133,7 +135,11 @@ def recently_verified_sender(
     for _mid, _line, metadata in reversed(rows[-max(1, min(limit, _RECENT_MAX)):]):
         try:
             info = json.loads(metadata)
-            if info.get("user_id") != sender_id or not info.get("timestamp"):
+            if (
+                info.get("user_id") != sender_id
+                or int(info.get("thread_id") or 0) != int(thread_id)
+                or not info.get("timestamp")
+            ):
                 continue
             at = datetime.fromisoformat(info["timestamp"])
             if at.tzinfo is None:
