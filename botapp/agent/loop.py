@@ -170,7 +170,7 @@ async def run_agent_loop(
         from botapp.noya_social_roles import verified_social_instruction
         social_block = verified_social_instruction(social_context)
         if social_block:
-            system_prompt += "\\n\\n" + social_block
+            system_prompt += "\n\n" + social_block
         if speaker_user_id is not None:
             from botapp.ai.prompts import build_speaker_block
             speaker_block = build_speaker_block(
