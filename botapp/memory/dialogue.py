@@ -79,3 +79,12 @@ def forget_dialogue(user_id: int, *, conversation_id: int | None = None) -> int:
         rows = rows.filter(conversation_id=conversation_id)
     deleted, _ = rows.delete()
     return deleted
+
+
+def prune_expired_dialogue() -> int:
+    """Remove expired dialogue globally when the normal memory lifecycle runs."""
+    days, _turns = _limits()
+    deleted, _ = NoyaDialogueTurn.objects.filter(
+        created_at__lt=timezone.now() - timedelta(days=days),
+    ).delete()
+    return deleted
