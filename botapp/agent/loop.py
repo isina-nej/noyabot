@@ -183,9 +183,15 @@ async def run_agent_loop(
         from botapp.telegram_media import images_to_data_urls
         urls = images_to_data_urls(images[:3])
         if urls:
-            user_content = [{"type": "text", "text": question}] + [
-                {"type": "image_url", "image_url": {"url": url}} for url in urls
-            ]
+            user_content = [{"type": "text", "text": question}]
+            for url, img in zip(urls, images[:3]):
+                if img.get("frame_index"):
+                    user_content.append({
+                        "type": "text",
+                        "text": f"فریم {img['frame_index']} از {img['frame_count']} "
+                                f"(منبع: {img.get('source', 'message')})، به ترتیب زمانی:",
+                    })
+                user_content.append({"type": "image_url", "image_url": {"url": url}})
     messages.append({"role": "user", "content": user_content})
 
     metadata: dict[str, Any] = {}
