@@ -102,6 +102,34 @@ class MediaIntakeTest(SimpleTestCase):
         self.assertEqual(client.post.await_args.kwargs["data"]["model"], "whisper-1")
         self.assertEqual(client.post.await_args.kwargs["files"]["file"][0], "noya_input.mp3")
 
+    def test_agent_loop_forwards_images_to_model(self):
+        from botapp.agent.loop import run_agent_loop
+        response = MagicMock()
+        response.text = '{"choices":[{"message":{"content":"تصویر را دیدم"},"finish_reason":"stop"}]}'
+        response.json.return_value = {
+            "choices": [{"message": {"content": "تصویر را دیدم"}, "finish_reason": "stop"}]
+        }
+        response.status_code = 200
+        client = AsyncMock()
+        client.post.return_value = response
+        cm = AsyncMock()
+        cm.__aenter__.return_value = client
+        with patch.dict("os.environ", {
+            "NOYA_API_URL": "http://router/v1/chat/completions",
+            "NOYA_MODEL": "text-only",
+            "NOYA_VISION_MODEL": "vision-model",
+        }), patch("botapp.agent.loop.httpx.AsyncClient", return_value=cm):
+            text, metadata = async_to_sync(run_agent_loop)(
+                "این عکس چیست؟", "test-session",
+                images=[{"mime": "image/jpeg", "data": b"jpeg-bytes"}],
+            )
+        self.assertEqual(text, "تصویر را دیدم")
+        payload = client.post.await_args.kwargs["json"]
+        self.assertEqual(payload["model"], "vision-model")
+        content = payload["messages"][-1]["content"]
+        self.assertEqual(content[0]["type"], "text")
+        self.assertTrue(content[1]["image_url"]["url"].startswith("data:image/jpeg;base64,"))
+
     def test_document_null_bytes_rejected(self):
         with self.assertRaises(ValueError):
             _read_document(b"abc\x00xyz", ".txt")
