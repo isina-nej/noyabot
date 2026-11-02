@@ -347,6 +347,11 @@ def build_ai_messages(
         mime = (mime_value or detected or "").strip().lower()
         if mime not in _ALLOWED_MIMES or mime != detected:
             raise ValueError("Unsupported image or MIME/signature mismatch")
+        if img.get("frame_index"):
+            vision_parts.append({
+                "type": "text",
+                "text": f"فریم {img['frame_index']} از {img.get('frame_count', '?')} به ترتیب زمانی:",
+            })
         vision_parts.append({"type": "image_url", "image_url": {"url": to_data_url(mime, bytes(data))}})
     if not question_text and not vision_parts:
         raise ValueError("A question or at least one image is required")
