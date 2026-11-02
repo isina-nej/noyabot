@@ -21,6 +21,7 @@ from django.conf import settings
 from botapp.telegram_rich import extract_message_body
 
 GROUP_CHAT_TYPES = {"group", "supergroup"}
+OBSERVABLE_CHAT_TYPES = GROUP_CHAT_TYPES | {"channel"}
 _RECENT_MAX = 24
 _RECENT_DEFAULT = 8
 _LINE_MAX = 400
@@ -50,7 +51,8 @@ def _body(message) -> str:
 def _sender_label(message) -> str:
     user = getattr(message, "from_user", None)
     if user is None:
-        return "ناشناس"
+        chat = getattr(message, "chat", None)
+        return str(getattr(chat, "title", None) or "ناشناس")[:80]
     name = (getattr(user, "full_name", None) or getattr(user, "first_name", None) or "").strip()
     username = (getattr(user, "username", None) or "").strip()
     if name and username:
@@ -60,7 +62,7 @@ def _sender_label(message) -> str:
 
 def remember_group_message(message) -> None:
     """Record a short line for later Noya context (groups only, best-effort)."""
-    if not _is_group(message):
+    if _chat_type(message) not in OBSERVABLE_CHAT_TYPES:
         return
     text = _body(message)
     if not text:
