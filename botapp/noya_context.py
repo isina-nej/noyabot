@@ -14,6 +14,7 @@ from __future__ import annotations
 import json
 import re
 import threading
+from datetime import datetime, timezone
 from collections import defaultdict, deque
 
 from django.conf import settings
@@ -114,6 +115,35 @@ def _message_metadata(message, *, text: str | None = None) -> str:
         "text": (text if text is not None else _body(message))[:_LINE_MAX],
     }
     return json.dumps(fields, ensure_ascii=False, separators=(",", ":"))
+
+
+def recently_verified_sender(
+    chat_id: int, sender_id: int, *, max_age_seconds: int = 600, limit: int = 12,
+) -> bool:
+    """Recent participation in this chat, proven by Telegram's sender ID.
+
+    No name or text matching. Stale messages cannot activate the special tone;
+    do not treat recent participation as online-status tracking.
+    """
+    if not chat_id or not sender_id:
+        return False
+    with _lock:
+        rows = list(_recent.get(int(chat_id), ()))
+    now = datetime.now(timezone.utc)
+    for _mid, _line, metadata in reversed(rows[-max(1, min(limit, _RECENT_MAX)):]):
+        try:
+            info = json.loads(metadata)
+            if info.get("user_id") != sender_id or not info.get("timestamp"):
+                continue
+            at = datetime.fromisoformat(info["timestamp"])
+            if at.tzinfo is None:
+                continue
+            age = (now - at.astimezone(timezone.utc)).total_seconds()
+            if 0 <= age <= max_age_seconds:
+                return True
+        except (TypeError, ValueError, KeyError):
+            continue
+    return False
 
 
 def recent_chat_lines(chat_id: int, limit: int = _RECENT_DEFAULT, *, exclude_ids: set[int] | None = None) -> list[str]:
