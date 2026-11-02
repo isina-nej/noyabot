@@ -41,6 +41,8 @@ class AmbientReplyTest(SimpleTestCase):
             self.assertTrue(should_join_group_conversation(_message(), now=1000))
             for _ in range(8):
                 self.assertFalse(should_join_group_conversation(_message(), now=1002))
+            for _ in range(5):
+                self.assertFalse(should_join_group_conversation(_message(), now=1700))
             self.assertTrue(should_join_group_conversation(_message(), now=1700))
 
     def test_do_not_trigger_on_bots_commands_replies_or_channels(self):
