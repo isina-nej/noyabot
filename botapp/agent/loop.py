@@ -142,6 +142,7 @@ async def run_agent_loop(
     speaker_user_id: int | None = None,
     speaker_name: str = "",
     images: list[dict] | None = None,
+    social_context: dict | None = None,
     on_token=None,
 ) -> tuple[str, dict]:
     """Run the Hermes-style agent loop.
@@ -166,6 +167,10 @@ async def run_agent_loop(
 
     messages: list[dict[str, Any]] = []
     if system_prompt:
+        from botapp.noya_social_roles import verified_social_instruction
+        social_block = verified_social_instruction(social_context)
+        if social_block:
+            system_prompt += "\\n\\n" + social_block
         if speaker_user_id is not None:
             from botapp.ai.prompts import build_speaker_block
             speaker_block = build_speaker_block(
