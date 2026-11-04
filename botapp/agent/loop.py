@@ -144,6 +144,7 @@ async def run_agent_loop(
     images: list[dict] | None = None,
     social_context: dict | None = None,
     reaction_allowed: bool = False,
+    silence_allowed: bool = False,
     on_token=None,
 ) -> tuple[str, dict]:
     """Run the Hermes-style agent loop.
@@ -171,6 +172,9 @@ async def run_agent_loop(
         if reaction_allowed:
             from botapp.noya_reactions import reaction_instruction
             system_prompt += "\n\n" + reaction_instruction()
+        if silence_allowed:
+            from botapp.noya_silence import silence_instruction
+            system_prompt += "\n\n" + silence_instruction()
         from botapp.noya_social_roles import verified_social_instruction
         social_block = verified_social_instruction(social_context)
         if social_block:
@@ -306,6 +310,11 @@ async def run_agent_loop(
         # ── No tool calls → done ──
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
+            if silence_allowed and not used_tools and isinstance(raw_content, str):
+                from botapp.noya_silence import silent_token
+                if silent_token(raw_content, allowed=True):
+                    metadata["no_reply"] = True
+                    return "", metadata
             if reaction_allowed and not used_tools and isinstance(raw_content, str):
                 from botapp.noya_reactions import extract_reaction
                 emoji = extract_reaction(raw_content, allowed=True)
