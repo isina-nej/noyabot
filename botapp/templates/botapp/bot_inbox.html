@@ -73,7 +73,7 @@
 <script>
 "use strict";
 const API="/inbox/api/", el=(id)=>document.getElementById(id);
-const state={bot:null,chat:null,chats:[],messages:[],busy:false};
+const state={bot:null,chat:null,chats:[],messages:[],busy:false,nextOffset:null};
 const request=async(path,options={})=>{
   const response=await fetch(API+path,{credentials:"same-origin",cache:"no-store",...options});
   let data;try{data=await response.json()}catch{throw Error("پاسخ سرور قابل خواندن نیست")}
@@ -96,6 +96,11 @@ function chatsView(){
     inner.append(title,prev);button.append(avatar,inner);
     button.addEventListener("click",()=>openChat(c));container.append(button);
   });
+  if(state.nextOffset!==null){
+    const more=document.createElement("button");more.className="chat";
+    more.textContent="نمایش گفتگوهای بیشتر";
+    more.addEventListener("click",loadMoreChats);container.append(more);
+  }
 }
 function messagesView(scrollBottom=false){
   const container=el("messages");const oldHeight=container.scrollHeight,oldTop=container.scrollTop;
@@ -121,11 +126,32 @@ async function openChat(c){
   chatsView();
   try{const bot=state.bot,chat=c.id;const d=await request("messages/?bot_id="+encodeURIComponent(bot)+"&chat_id="+encodeURIComponent(chat));if(state.chat!==chat||state.bot!==bot)return;state.messages=d.messages;messagesView(true)}catch(e){error(e.message)}
 }
-async function refreshChats(){
+async function refreshChats(reset=false){
   if(!state.bot)return;
-  try{const selected=state.bot;const d=await request("chats/?bot_id="+encodeURIComponent(selected));
-    if(state.bot!==selected)return;state.chats=d.chats;chatsView();el("inbox-summary").textContent=d.chats.length+" گفتگو در آرشیو";}
-  catch(e){error(e.message)}
+  try{
+    const selected=state.bot, q=el("search").value.trim();
+    const d=await request("chats/?bot_id="+encodeURIComponent(selected)+"&q="+encodeURIComponent(q)+"&limit=80");
+    if(state.bot!==selected||q!==el("search").value.trim())return;
+    if(reset){state.chats=d.chats;state.nextOffset=d.next_offset}
+    else {
+      const recent=new Set(d.chats.map(x=>x.id));
+      state.chats=[...d.chats,...state.chats.filter(x=>!recent.has(x.id))];
+      if(state.nextOffset===null&&state.chats.length<=80)state.nextOffset=d.next_offset;
+    }
+    chatsView();el("inbox-summary").textContent=state.chats.length+" گفتگو نمایش داده شده";
+  }catch(e){error(e.message)}
+}
+async function loadMoreChats(){
+  if(!state.bot||state.nextOffset===null)return;
+  try{
+    const selected=state.bot, q=el("search").value.trim(), offset=state.nextOffset;
+    const d=await request("chats/?bot_id="+encodeURIComponent(selected)+"&q="+encodeURIComponent(q)+"&offset="+offset+"&limit=80");
+    if(state.bot!==selected||q!==el("search").value.trim())return;
+    const known=new Set(state.chats.map(x=>x.id));
+    state.chats.push(...d.chats.filter(x=>!known.has(x.id)));
+    state.nextOffset=d.next_offset;chatsView();
+    el("inbox-summary").textContent=state.chats.length+" گفتگو نمایش داده شده";
+  }catch(e){error(e.message)}
 }
 async function loadOlder(){
   if(!state.chat||!state.messages.length)return;
@@ -161,11 +187,12 @@ async function boot(){
     if(!d.bots.length){const opt=document.createElement("option");opt.textContent="فعلاً پیامی ثبت نشده";select.append(opt);return}
     d.bots.forEach(b=>{const opt=document.createElement("option");opt.value=b.id;opt.textContent="ربات "+b.id+" · "+b.chats+" گفتگو";select.append(opt)});
     state.bot=d.bots[0].id;select.value=state.bot;
-    select.addEventListener("change",()=>{state.bot=select.value;state.chat=null;state.messages=[];el("title").textContent="گفتگو را انتخاب کنید";refreshChats()});
-    await refreshChats();
+    select.addEventListener("change",()=>{state.bot=select.value;state.chat=null;state.messages=[];state.chats=[];state.nextOffset=null;el("title").textContent="گفتگو را انتخاب کنید";refreshChats(true)});
+    await refreshChats(true);
   }catch(e){error(e.message)}
 }
-el("search").addEventListener("input",chatsView);
+let searchTimer;
+el("search").addEventListener("input",()=>{chatsView();clearTimeout(searchTimer);searchTimer=setTimeout(()=>refreshChats(true),250)});
 el("send").addEventListener("click",send);
 el("back").addEventListener("click",()=>el("app").classList.add("show-list"));
 el("draft").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
