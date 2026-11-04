@@ -255,6 +255,16 @@ def relationship_context(state: EmotionalState | NoyaRelationshipState) -> dict:
         if reconciled:
             do_not_claim.append("requires_new_apology")
     mild_max = _emotion_config().mild_hurt_max
+    tone = TONE_DIRECTIVES[status]
+    if status in {"neutral", "reconciled"} and state.warmth >= 58:
+        # The old low/medium/high buckets kept every early positive event
+        # invisible to the LLM: warmth 55 -> 58 still reported "medium".
+        # Expose a short qualitative cue, without raw scores or claiming
+        # a romantic commitment, so warmth persists across later turns.
+        tone += (
+            " این کاربر قبلاً مهربانی نشان داده؛ لحن تو کمی گرم‌تر و "
+            "دوستانه‌تر باشد، ولی هر بار آن را یادآوری یا تکرار نکن."
+        )
     return {
         "authoritative": True,
         "relationship_status": status,
@@ -267,7 +277,7 @@ def relationship_context(state: EmotionalState | NoyaRelationshipState) -> dict:
         "warmth_level": _level(state.warmth),
         "playfulness_level": _level(state.playfulness),
         "trust_level": _level(state.trust_context),
-        "tone_directive": TONE_DIRECTIVES[status],
+        "tone_directive": tone,
         "do_not_claim": do_not_claim,
     }
 
