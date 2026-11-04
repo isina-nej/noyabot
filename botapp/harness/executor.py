@@ -341,6 +341,13 @@ class HarnessExecutor:
         self.store.save(run)
 
     def _exec_sync(self, run: HarnessRunState, step: HarnessStepState) -> None:
+        # Python cannot kill a running thread. The synchronous executor has
+        # no hard deadline and must not run untrusted tools in production.
+        import os
+        if (os.getenv("NOYA_ENVIRONMENT", "").strip().casefold() == "production"
+                and os.getenv("NOYA_ALLOW_SYNC_HARNESS", "false").casefold()
+                    not in {"1", "true", "yes", "on"}):
+            raise StepTimeoutError("synchronous harness execution disabled in production")
         step_id = step.step_id
         step.status = "running"
         step.started_at = self.clock()
