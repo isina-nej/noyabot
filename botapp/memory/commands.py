@@ -91,6 +91,10 @@ async def forget_all_command(message, confirmation: str):
     dialogue_count = await sync_to_async(forget_dialogue, thread_sensitive=True)(
         int(message.from_user.id),
     )
+    from botapp.noya_identity import forget_user_identities
+    identity_count = await sync_to_async(
+        forget_user_identities, thread_sensitive=True,
+    )(int(message.from_user.id))
     await message.reply(
-        f"{count} حافظه، {relationship_count} سابقهٔ رابطه و {dialogue_count} پیام گفتگو حذف شد."
+        f"{count} حافظه، {relationship_count} سابقهٔ رابطه، {dialogue_count} پیام گفتگو و {identity_count} مشخصات هویتی حذف شد."
     )
