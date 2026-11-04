@@ -59,7 +59,7 @@ class NoyaHistoryTests(TestCase):
     def test_never_crosses_chat_topic_or_future(self):
         for chat_id, thread_id, mid, marker in [
             (-1002, 7, 180, "SECRET_OTHER_CHAT"),
-            (-1001, 9, 181, "SECRET_OTHER_TOPIC"),
+            (-1001, 9, 202, "SECRET_OTHER_TOPIC"),
             (-1001, 7, 251, "SECRET_FUTURE"),
         ]:
             MessageSnapshot.objects.create(
