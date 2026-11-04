@@ -1,0 +1,19 @@
+# Telegram Web for Bots by ohld, GPL-3.0-or-later.
+# This independently hosted static MTProto client is NOT an aiogram poller.
+# Put HTTPS + strong admin authentication in a reverse proxy before exposing.
+services:
+  telegram-web-for-bot:
+    build:
+      context: ${WEBBOT_SOURCE:?Set WEBBOT_SOURCE to the independently cloned upstream source}
+      dockerfile: Dockerfile
+      args:
+        APP_ENV: production
+        BASE_URL: ${BOT_WEB_URL:?Set BOT_WEB_URL to the HTTPS app origin}
+        TELEGRAM_API_ID: ${TELEGRAM_API_ID:?Set Telegram API ID}
+        TELEGRAM_API_HASH: ${TELEGRAM_API_HASH:?Set Telegram API hash}
+    ports:
+      - "127.0.0.1:8431:80"
+    restart: unless-stopped
+    mem_limit: 256m
+    security_opt:
+      - no-new-privileges:true
