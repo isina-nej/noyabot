@@ -320,6 +320,12 @@ class ArchiveMiddleware(BaseMiddleware):
                     await sync_to_async(message_archive.archive_message, thread_sensitive=True)(event)
                 except Exception:  # archival must never break message handling
                     logger.debug("message archival failed", exc_info=True)
+            # Public names in archived groups; private nickname only by sender request.
+            from botapp.noya_identity import observe_identity
+            try:
+                await sync_to_async(observe_identity, thread_sensitive=True)(event)
+            except Exception:
+                logger.debug("identity observation unavailable", exc_info=True)
             # Separate per-bot private/group inbox: the legacy MessageSnapshot
             # does not carry bot_id and cannot safely serve a multi-bot UI.
             from botapp import bot_inbox
@@ -340,4 +346,10 @@ class ArchiveMiddleware(BaseMiddleware):
                 remember_group_message(event)
             except Exception:  # context buffer must never break message handling
                 logger.debug("noya recent buffer failed", exc_info=True)
+            # Off the response path: bounded background STT/vision, opt-in only.
+            try:
+                from botapp.noya_archive_media import schedule_media_enrichment
+                schedule_media_enrichment(data.get("bot"), event)
+            except Exception:
+                logger.debug("archived media scheduling unavailable", exc_info=True)
         return result
