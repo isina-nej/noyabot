@@ -457,15 +457,13 @@ async def generate_noya_image(prompt: str, *, translate: bool = True) -> bytes |
         "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
+    # 9Router providers differ in optional image parameters; send only the
+    # widely-supported fields for maximum compatibility with image providers.
     payload = {
         "model": model,
         "prompt": en_prompt,
         "n": 1,
-        "size": "auto",
-        "quality": "auto",
-        "background": "auto",
-        "image_detail": "high",
-        "output_format": "png",
+        "response_format": "b64_json",
     }
     try:
         t0 = monotonic()
