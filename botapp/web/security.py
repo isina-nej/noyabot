@@ -143,14 +143,21 @@ class SafeNetworkBackend(httpcore.AnyIOBackend):
             except Exception:
                 ascii_host = clean_host
             addr_info = socket.getaddrinfo(ascii_host, port, socket.AF_UNSPEC, socket.SOCK_STREAM)
+            verified_addresses = []
             for _, _, _, _, sockaddr in addr_info:
                 ip_str = str(sockaddr[0])
                 if is_ip_blocked(ipaddress.ip_address(ip_str)):
                     raise BlockedURLError(f"SSRF / DNS Rebinding blocked at TCP connect: {host} -> {ip_str}")
+                verified_addresses.append(ip_str)
+            if not verified_addresses:
+                raise BlockedURLError(f"No public destination resolved for {host}")
         except socket.gaierror as exc:
             raise BlockedURLError(f"DNS lookup failed for {host}: {exc}") from exc
 
-        connect_fn = getattr(super(), "connect_tcp")
-        return await connect_fn(
-            host, port, timeout=timeout, local_address=local_address, socket_options=socket_options
+        # Connect to the exact verified IP, not the hostname (which would
+        # trigger another DNS lookup). httpcore retains the original origin
+        # hostname for Host and TLS SNI/certificate verification.
+        return await super().connect_tcp(
+            verified_addresses[0], port, timeout=timeout,
+            local_address=local_address, socket_options=socket_options,
         )
