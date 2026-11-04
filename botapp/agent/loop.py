@@ -287,7 +287,7 @@ async def run_agent_loop(
             data = _parse_sse_stream(text)
             if not data:
                 ai_sse_malformed(api_url)
-                logger.error(f"[NOYA-AGENT] Empty/unparseable response: {text[:200]}")
+                logger.error("[NOYA-AGENT] Unparseable provider response status=%s bytes=%d", resp.status_code, len(text))
                 return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
 
         choice = data.get("choices", [{}])[0]
