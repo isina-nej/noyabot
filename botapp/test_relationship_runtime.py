@@ -100,6 +100,35 @@ class RelationshipRuntimeTests(TestCase):
         self.assertIn("already_forgave", states[-1]["do_not_claim"])
         self.assertNotIn("requires_new_apology", states[-1]["do_not_claim"])
 
+    def test_affection_is_persisted_and_present_in_future_model_context(self):
+        captured = []
+
+        async def provider(question, session_id, **kwargs):
+            captured.append(_relationship_block(question))
+            return "حتما"
+
+        async_to_sync(run_ai_with_memory)(
+            _message(chat_id=-706, message_id=1, text="نویا دوستت دارم"),
+            "سؤال", provider, "telegram:-706",
+        )
+        conversation = MemoryConversation.objects.get(conversation_id="telegram:-706:0")
+        first = NoyaRelationshipState.objects.get(
+            user__telegram_user_id=42, conversation=conversation,
+        )
+        self.assertGreater(first.warmth, 55)
+        self.assertGreater(first.trust_context, 50)
+        old_warmth = first.warmth
+        # The next request has no explicit affection, yet reloads the state
+        # from the DB and sends the same higher warmth to the provider.
+        async_to_sync(run_ai_with_memory)(
+            _message(chat_id=-706, message_id=2, text="حالت خوبه؟"),
+            "سؤال", provider, "telegram:-706",
+        )
+        first.refresh_from_db()
+        self.assertEqual(first.warmth, old_warmth)
+        self.assertTrue(captured[1]["authoritative"])
+        self.assertEqual(captured[1]["relationship_status"], "neutral")
+
     def test_model_quality_criticism_does_not_start_a_conflict(self):
         captured = []
 
