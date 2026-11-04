@@ -125,6 +125,7 @@ class EmotionalEvent:
 class EmotionalState:
     hurt_score: float = 0.0
     repair_progress: float = 0.0
+    decay_fraction: float = 0.0
     warmth: float = 55.0
     playfulness: float = 55.0
     trust_context: float = 50.0
@@ -156,6 +157,7 @@ class EmotionalState:
         return {
             "hurt_score": self.hurt_score,
             "repair_progress": self.repair_progress,
+            "decay_fraction": self.decay_fraction,
             "warmth": self.warmth,
             "playfulness": self.playfulness,
             "trust_context": self.trust_context,
@@ -190,6 +192,7 @@ class EmotionalState:
         return cls(
             hurt_score=hurt,
             repair_progress=clamp(raw.get("repair_progress", 0), 0, hurt),
+            decay_fraction=clamp(raw.get("decay_fraction", 0), 0, 0.999999),
             warmth=clamp(raw.get("warmth", 55)),
             playfulness=clamp(raw.get("playfulness", 55)),
             trust_context=clamp(raw.get("trust_context", 50)),
@@ -359,6 +362,7 @@ def apply_event(
             next_state,
             hurt_score=clamp(carried_hurt + negative * confidence_value),
             repair_progress=0.0,
+            decay_fraction=0.0,
             warmth=clamp(state.warmth - negative * 0.35),
             playfulness=clamp(state.playfulness - negative * 0.25),
             trust_context=clamp(state.trust_context - negative * 0.2),
@@ -415,15 +419,24 @@ def decay_state(state: EmotionalState, *, now: datetime | None = None, days: flo
         days = max(0.0, (current - _now(checkpoint)).total_seconds() / 86400)
     days = max(0.0, float(days))
     if days == 0 or state.hurt_score <= 0:
-        return _finalize(replace(state, last_interaction_at=current), config=config)
+        return _finalize(replace(
+            state, last_interaction_at=current,
+            decay_fraction=0.0 if state.hurt_score <= 0 else state.decay_fraction,
+        ), config=config)
     rate = config.serious_decay_per_day if state.hurt_score > config.sulky_hurt_max else config.minor_decay_per_day
-    hurt = clamp(state.hurt_score - days * max(0.0, rate))
+    # Scores are stored as integer columns. Preserve sub-point decay between
+    # writes so frequent requests cannot freeze hurt forever through rounding.
+    accrued = max(0.0, days * max(0.0, rate)) + clamp(state.decay_fraction, 0, 0.999999)
+    whole_points = math.floor(accrued + 1e-9)
+    hurt = clamp(state.hurt_score - whole_points)
+    remainder = (accrued - whole_points) if hurt > MIN_SCORE else 0.0
     repair = min(state.repair_progress, hurt)
     became_reconciled = hurt <= MIN_SCORE and state.remaining_hurt > MIN_SCORE and state.conflict_active
     next_state = replace(
         state,
         hurt_score=hurt,
         repair_progress=repair,
+        decay_fraction=clamp(remainder, 0, 0.999999),
         last_interaction_at=current,
         active_conflict_id=None if hurt <= MIN_SCORE else state.active_conflict_id,
         reconciliation_count=state.reconciliation_count + (1 if became_reconciled else 0),
