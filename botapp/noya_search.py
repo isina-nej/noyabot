@@ -190,5 +190,5 @@ async def maybe_web_search(question: str) -> str:
     # its "latest" intent even after the search-query cleanup.
     block = await web_search(query, freshness=freshness_intent(question))
     if block:
-        logger.info("noya_search_hit query=%s", query[:60])
+        logger.info("noya_search_hit query_chars=%d", len(query))
     return block
