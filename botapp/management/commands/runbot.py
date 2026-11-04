@@ -24,6 +24,7 @@ from aiogram.types import (
     InlineKeyboardButton,
     InlineKeyboardMarkup,
     Message,
+    ReactionTypeEmoji,
 )
 from django.utils import timezone
 
@@ -466,6 +467,25 @@ def is_group_chat(message: Message) -> bool:
 
 def is_private_chat(message: Message) -> bool:
     return message.chat.type == ChatType.PRIVATE
+
+
+async def react_to_noya_message(message: Message, emoji: str) -> bool:
+    """React to the triggering Telegram message, without posting a reply."""
+    from botapp.noya_reactions import SUGGESTED_REACTIONS
+    if emoji not in SUGGESTED_REACTIONS:
+        return False
+    try:
+        return bool(await message.bot.set_message_reaction(
+            chat_id=message.chat.id,
+            message_id=message.message_id,
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+        ))
+    except TelegramAPIError as exc:
+        logger.info(
+            "noya_reaction_not_available chat=%s message=%s error=%s",
+            message.chat.id, message.message_id, type(exc).__name__,
+        )
+        return False
 
 
 async def reply_noya_answer(message: Message, answer: str) -> None:
@@ -1912,6 +1932,13 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         images=images or None,
     )
     t_reply = monotonic()
+    # A trusted model reaction is an alternative to a text reply, never a
+    # substitute for analysis or any generated attachment.
+    emoji = agent_metadata.get("reaction_emoji")
+    if (emoji and not is_analysis and not agent_metadata.get("generated_image_b64")
+            and not agent_metadata.get("generated_tts_audio")):
+        await react_to_noya_message(message, emoji)
+        return
     # Message analysis requests MUST always yield textual response; never photo/voice or action
     if is_analysis:
         await reply_noya_answer(message, answer)
