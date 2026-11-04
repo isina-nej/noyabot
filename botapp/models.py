@@ -990,6 +990,47 @@ class MessageSnapshot(models.Model):
         return f"MessageSnapshot({self.chat_id}:{self.message_id})"
 
 
+class BotInboxMessage(models.Model):
+    """Message received by one specific Telegram bot, not an arbitrary history dump.
+
+    This table deliberately does not share MessageSnapshot's (chat_id, message_id)
+    identity: two bots can receive the same group message, and one bot's private
+    messages must never leak into the other bot's inbox.
+    """
+
+    bot_id = models.BigIntegerField()
+    chat_id = models.BigIntegerField()
+    message_id = models.BigIntegerField()
+    chat_type = models.CharField(max_length=32, default="private")
+    chat_title = models.CharField(max_length=255, blank=True, default="")
+    thread_id = models.BigIntegerField(default=0)
+    sender_user_id = models.BigIntegerField(null=True, blank=True)
+    sender_name = models.CharField(max_length=255, blank=True, default="")
+    sender_username = models.CharField(max_length=64, blank=True, default="")
+    is_outgoing = models.BooleanField(default=False)
+    text = models.TextField(blank=True, default="")
+    caption = models.TextField(blank=True, default="")
+    content_type = models.CharField(max_length=32, default="text")
+    media_file_id = models.CharField(max_length=512, blank=True, default="")
+    reply_to_message_id = models.BigIntegerField(null=True, blank=True)
+    message_date = models.DateTimeField(null=True, blank=True)
+    archived_at = models.DateTimeField(auto_now_add=True)
+    edited_at = models.DateTimeField(null=True, blank=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["bot_id", "chat_id", "message_id"],
+                name="uniq_bot_inbox_message_identity",
+            ),
+        ]
+        indexes = [
+            models.Index(fields=["bot_id", "chat_id", "-message_id"], name="inbox_peer_recent_idx"),
+            models.Index(fields=["bot_id", "-archived_at"], name="inbox_bot_recent_idx"),
+        ]
+        ordering = ["-archived_at"]
+
+
 class AgentConfirmation(models.Model):
     """A pending high/medium-risk operation awaiting a glass-key confirmation."""
 
