@@ -173,6 +173,15 @@ AGENT_CLASSIFY_ENABLED = os.getenv("AGENT_CLASSIFY_ENABLED", "true").lower() in 
 AGENT_CACHE_TTL_SECONDS = int(os.getenv("AGENT_CACHE_TTL_SECONDS", "600"))
 MESSAGE_ARCHIVE_ENABLED = os.getenv("MESSAGE_ARCHIVE_ENABLED", "false").lower() in _TRUE
 MESSAGE_ARCHIVE_RETENTION_DAYS = int(os.getenv("MESSAGE_ARCHIVE_RETENTION_DAYS", "30"))
+# Opt-in archive is required; group/topic scope and prompt budget are enforced.
+NOYA_HISTORY_ENABLED = os.getenv("NOYA_HISTORY_ENABLED", "true").lower() in _TRUE
+NOYA_HISTORY_SCAN_MESSAGES = min(200, max(1, int(os.getenv("NOYA_HISTORY_SCAN_MESSAGES", "200"))))
+NOYA_HISTORY_SELECTED_LINES = min(40, max(5, int(os.getenv("NOYA_HISTORY_SELECTED_LINES", "30"))))
+NOYA_HISTORY_MAX_CHARS = min(12000, max(1000, int(os.getenv("NOYA_HISTORY_MAX_CHARS", "8000"))))
+# Media metadata enrichment consumes STT/vision requests; never silently enable.
+NOYA_ARCHIVE_MEDIA_ENRICHMENT_ENABLED = os.getenv("NOYA_ARCHIVE_MEDIA_ENRICHMENT_ENABLED", "false").lower() in _TRUE
+NOYA_ARCHIVE_VIDEO_VISION_ENABLED = os.getenv("NOYA_ARCHIVE_VIDEO_VISION_ENABLED", "false").lower() in _TRUE
+
 
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
