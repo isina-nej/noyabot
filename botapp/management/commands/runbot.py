@@ -1888,7 +1888,10 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     )
     if images and not ask:
         ask = "این تصویر / استیکر را ببین و پاسخ بده."
-    from botapp.noya_profile import requests_my_profile_image, my_profile_image
+    from botapp.noya_profile import (
+        requests_my_profile_image, my_profile_image,
+        requests_replied_profile_image, replied_user_profile_image,
+    )
     if requests_my_profile_image(ask):
         profile_frame = await my_profile_image(message)
         if profile_frame is None:
@@ -1898,6 +1901,14 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             )
             return
         images = [profile_frame, *images][:3]
+    elif requests_replied_profile_image(ask) and message.reply_to_message:
+        # A profile picture visible to the bot may be viewed on request,
+        # but third-party photos, bio and birthdate are never persisted.
+        replied_frame = await replied_user_profile_image(message)
+        if replied_frame is None:
+            await message.reply("عکس پروفایل این فرد از طریق تلگرام در دسترسم نیست.")
+            return
+        images = [replied_frame, *images][:3]
     # Attach reply-chain + recent group chatter so Noya can read the chat/tag target.
     payload = build_noya_user_payload(message, ask, bot_username=bot_username)
     if media.context:
