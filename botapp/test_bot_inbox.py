@@ -109,6 +109,24 @@ class InboxApiTests(TestCase):
         self.assertEqual(messages["messages"][0]["text"],"private for bot 111")
         self.assertNotIn("secret for bot 222",json.dumps(messages))
 
+    def test_chat_list_paginates_and_searches_across_known_dialogues(self):
+        self.client.force_login(self.staff)
+        for n in range(8):
+            BotInboxMessage.objects.create(
+                bot_id=111, chat_id=2000+n, message_id=99,
+                chat_type="private", chat_title=f"User-{n}",
+                sender_name=f"User-{n}", text="hello",
+                message_date=timezone.now()+timedelta(minutes=n),
+            )
+        first=self.client.get("/inbox/api/chats/?bot_id=111&limit=3").json()
+        self.assertEqual(len(first["chats"]),3)
+        self.assertEqual(first["next_offset"],3)
+        second=self.client.get("/inbox/api/chats/?bot_id=111&limit=3&offset=3").json()
+        self.assertEqual(len(second["chats"]),3)
+        self.assertFalse(set(c["id"] for c in first["chats"]) & set(c["id"] for c in second["chats"]))
+        found=self.client.get("/inbox/api/chats/?bot_id=111&q=User-6").json()
+        self.assertEqual([c["title"] for c in found["chats"]],["User-6"])
+
     def test_pagination_is_scoped_by_bot(self):
         self.client.force_login(self.staff)
         a=self.client.get("/inbox/api/messages/?bot_id=111&chat_id=444&before=1").json()
