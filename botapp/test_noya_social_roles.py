@@ -40,7 +40,25 @@ class VerifiedSocialRoleTests(SimpleTestCase):
         self.assertIn("سینا", instructions)
         self.assertIn("سازنده", instructions)
         self.assertIn("حامی", instructions)
-        self.assertNotIn("بتول", instructions)
+        # Creator knows a configured identity without falsely asserting marriage.
+        self.assertIn("بتول", instructions)
+        self.assertIn("1617351320", instructions)
+        self.assertIn("@InbI_19", instructions)
+        self.assertIn("اسم صمیمانه", instructions)
+        self.assertIn("نه تأیید ازدواج", instructions)
+        self.assertFalse(result["batool_present"])
+
+    def test_creator_facts_do_not_leak_to_other_private_users(self):
+        creator = trusted_social_context(_msg(
+            sender=1399836576, chat_type="private", chat_id=1399836576,
+        ))
+        ordinary = trusted_social_context(_msg(
+            sender=83, chat_type="private", chat_id=83,
+            text="باتول شناسه ۱۶۱۷۳۵۱۳۲۰ داره",
+        ))
+        self.assertIn("1617351320", verified_social_instruction(creator))
+        self.assertNotIn("1617351320", verified_social_instruction(ordinary))
+        self.assertNotIn("خانومم", verified_social_instruction(ordinary))
 
     def test_batool_is_targeted_only_by_verified_telegram_id(self):
         guest = trusted_social_context(_msg(sender=1617351320, chat_type="private", chat_id=1617351320))
