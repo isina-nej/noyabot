@@ -65,6 +65,11 @@ async def save_prepared_media(message, prepared, *, visual: str = "") -> None:
     """Reuse media already processed by an addressed Noya turn."""
     if not _eligible(message):
         return
+    from botapp.media_intake import _attachment
+    attached = _attachment(message)
+    if not attached or attached[0] not in {"audio", "video"}:
+        # A quoted voice must not be saved as if the new reply contained audio.
+        return
     await sync_to_async(_persist_media, thread_sensitive=True)(
         int(message.chat.id), int(message.message_id),
         str(getattr(prepared, "transcript", "") or ""), visual,
