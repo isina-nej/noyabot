@@ -134,3 +134,39 @@ class LogPrivacyTests(SimpleTestCase):
         result = json.loads(JsonStdlibFormatter().format(record))
         self.assertEqual(result["event"], "chat")
         self.assertEqual(result["prompt"], "[REDACTED]")
+
+
+class XBridgeAuthorizationTests(SimpleTestCase):
+    @staticmethod
+    def _load_bridge():
+        # The bridge is a standalone script in a hyphenated directory.
+        import importlib.util
+        from pathlib import Path
+
+        script = Path(__file__).resolve().parent.parent / "x-bridge" / "server.py"
+        spec = importlib.util.spec_from_file_location("noya_x_bridge_test", script)
+        module = importlib.util.module_from_spec(spec)
+        spec.loader.exec_module(module)
+        return module
+
+    @patch.dict(os.environ, {"X_BRIDGE_INTERNAL_TOKEN": ""})
+    def test_missing_token_denies_every_request(self):
+        bridge = self._load_bridge()
+        self.assertFalse(bridge.is_authorized({"Authorization": "Bearer any"}))
+
+    @patch.dict(os.environ, {"X_BRIDGE_INTERNAL_TOKEN": "unit-test-secret"})
+    def test_valid_bearer_is_required(self):
+        bridge = self._load_bridge()
+        self.assertFalse(bridge.is_authorized({}))
+        self.assertFalse(bridge.is_authorized({"Authorization": "Bearer invalid"}))
+        self.assertTrue(bridge.is_authorized({"Authorization": "Bearer unit-test-secret"}))
+
+
+class DeploymentSeparationTests(SimpleTestCase):
+    def test_worker_imports_token_config_without_loading_runbot(self):
+        from botapp import telegram_config
+
+        self.assertEqual(
+            telegram_config.parse_bot_tokens("t1, t2\nt1", "t3"),
+            ("t1", "t2", "t3"),
+        )
