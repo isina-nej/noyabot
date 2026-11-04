@@ -41,6 +41,7 @@ NEUTRAL_STATUS = "neutral"
 EVENT_DEFAULT_SEVERITY: dict[str, float] = {
     "friendly_message": 0.0,
     "compliment": 0.0,
+    "affection": 0.0,
     "gratitude": 0.0,
     "shared_humor": 0.0,
     "playful_teasing": 0.0,
@@ -76,7 +77,7 @@ REPAIR_CREDITS: dict[str, str] = {
 }
 
 POSITIVE_KINDS = frozenset(
-    {"friendly_message", "compliment", "gratitude", "shared_humor", "positive_news"}
+    {"friendly_message", "compliment", "affection", "gratitude", "shared_humor", "positive_news"}
 )
 
 
@@ -387,10 +388,13 @@ def apply_event(
                 reconciliation_count=state.reconciliation_count + (1 if fully_reconciled else 0),
             )
     elif kind in POSITIVE_KINDS:
+        # Positive social interactions must have a persistent effect even
+        # without a conflict, not just generate a one-off warm reply.
         next_state = replace(
             next_state,
-            warmth=clamp(state.warmth + (3.0 if kind == "compliment" else 1.5)),
+            warmth=clamp(state.warmth + (3.0 if kind in {"compliment", "affection"} else 1.5)),
             playfulness=clamp(state.playfulness + (3.0 if kind in {"shared_humor", "positive_news"} else 1.0)),
+            trust_context=clamp(state.trust_context + (1.0 if kind == "affection" else 0.0)),
         )
     next_state = _remember(next_state, item.event_id)
     return _finalize(next_state, config=config)
@@ -402,7 +406,13 @@ def decay_state(state: EmotionalState, *, now: datetime | None = None, days: flo
     if days is None:
         if state.last_negative_event_at is None:
             return _finalize(replace(state, last_interaction_at=current), config=config)
-        days = max(0.0, (current - _now(state.last_negative_event_at)).total_seconds() / 86400)
+        # This state is persisted after every read. Subtracting the full age
+        # since the ORIGINAL insult every time made each subsequent read
+        # deduct the same days again, producing artificial instant forgiveness.
+        # last_interaction_at is the last state checkpoint (with the original
+        # event as a fallback for pre-migration/legacy rows).
+        checkpoint = state.last_interaction_at or state.last_negative_event_at
+        days = max(0.0, (current - _now(checkpoint)).total_seconds() / 86400)
     days = max(0.0, float(days))
     if days == 0 or state.hurt_score <= 0:
         return _finalize(replace(state, last_interaction_at=current), config=config)
