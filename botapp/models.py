@@ -21,6 +21,33 @@ class TelegramUser(models.Model):
     def __str__(self):
         return str(self.telegram_user_id)
 
+class NoyaObservedIdentity(models.Model):
+    """Public Telegram name fields + self-declared nickname, scoped per chat.
+
+    Data is collected in groups only when group archival is explicitly enabled;
+    private chats store it only on an explicit nickname request.
+    """
+
+    chat_id = models.BigIntegerField(db_index=True)
+    user_id = models.BigIntegerField()
+    username = models.CharField(max_length=64, blank=True, default="")
+    first_name = models.CharField(max_length=128, blank=True, default="")
+    last_name = models.CharField(max_length=128, blank=True, default="")
+    nickname = models.CharField(max_length=64, blank=True, default="")
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chat_id", "user_id"],
+                name="uniq_noya_observed_identity",
+            ),
+        ]
+
+    def __str__(self):
+        return f"NoyaIdentity({self.chat_id}:{self.user_id})"
+
+
 class BotMessageSettings(models.Model):
     start_message = models.TextField(default="ربات استارت شد!")
     join_channel_message = models.TextField(
