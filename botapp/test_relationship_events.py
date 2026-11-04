@@ -52,6 +52,11 @@ class RelationshipEventDetectionTests(SimpleTestCase):
         self.assertIsNone(classify_social_event(None))
         self.assertIsNone(classify_social_event("ساعت چنده؟"))
 
+    def test_affection_is_a_positive_durable_event_but_playful_affection_is_playful(self):
+        self.assertEqual(classify_social_event("دوستت دارم").kind, "affection")
+        self.assertEqual(classify_social_event("عاشقتم نویا").kind, "affection")
+        self.assertEqual(classify_social_event("شوخی کردم دوستت دارم 😂").kind, "playful_teasing")
+
     def test_gratitude_and_positive_news(self):
         self.assertEqual(classify_social_event("مرسی، دمت گرم").kind, "gratitude")
         self.assertEqual(classify_social_event("چه خبر خوبی، قبول شدم").kind, "positive_news")
