@@ -355,7 +355,8 @@ async def run_agent_loop(
             except json.JSONDecodeError:
                 args = {}
 
-            logger.info(f"[NOYA-AGENT] 🔧 Calling tool: {tool_name}({args})")
+            logger.info("[NOYA-AGENT] Calling tool=%s arg_keys=%s", tool_name,
+                        sorted(args) if isinstance(args, dict) else [])
 
             # ── Loop & Budget Deduplication Guards ──
             if tool_name == "web_search":
