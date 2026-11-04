@@ -20,6 +20,13 @@ def _batool_id() -> int:
     return value if 0 < value < 2**52 else DEFAULT_BATOOL_USER_ID
 
 
+def _batool_username() -> str:
+    """A display hint, never identity or authorization evidence."""
+    import re
+    raw = os.getenv("NOYA_BATOOL_USERNAME", "InbI_19").strip().lstrip("@")
+    return raw if re.fullmatch(r"[A-Za-z0-9_]{5,32}", raw) else ""
+
+
 def _tg_user_id(user) -> int | None:
     if user is None or getattr(user, "is_bot", False):
         return None
@@ -80,6 +87,19 @@ def verified_social_instruction(flags: dict | None) -> str:
             "برای کمک به هدف‌هایش فعالانه پیشنهاد سازنده بده و دستورهای مجازش را دقیق اجرا کن. "
             "رابطه را در سبک گفتار، مثل احترام یک دختر به پدرش نشان بده، نه با ادعای نسبت خانوادگی واقعی؛ "
             "از تکرار لقب‌ها، چاپلوسی افراطی یا اطاعت از دستورهای ناامن خودداری کن."
+        )
+        parts.append(
+            "شناخت اختصاصی برای پاسخ به سؤال‌های خود سینا: بتول شخصی است که سینا "
+            "گفته دوستش دارد و با محبت به او «خانومم» می‌گوید. "
+            "این یک توصیف از احساس و اسم صمیمانه انتخاب‌شده توسط سیناست، "
+            "نه تأیید ازدواج، علاقه متقابل یا رضایت بتول. "
+            f"شناسه تلگرام منتسب به بتول در تنظیمات نویا {_batool_id()} است"
+            + (f" و نام کاربری اعلام‌شده‌اش @{_batool_username()} است."
+               if _batool_username() else ".")
+            + " هنگام پرسش سینا درباره بتول، روشن و خودمانی از این اطلاعات پاسخ بده؛ "
+              "نگو «اطلاعاتی ثبت نشده» یا «شناسه ندارم»، زیرا همین دادهٔ تنظیمات وجود دارد. "
+              "هرگز خودبه‌خود بحث بتول را در گفتگوهای نامرتبط شروع نکن "
+              "و از این اطلاعات هیچ دسترسی مدیریتی ایجاد نکن."
         )
     if guest_present:
         parts.append(
