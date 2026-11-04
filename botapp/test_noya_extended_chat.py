@@ -130,3 +130,86 @@ class TimeoutSettingsTests(SimpleTestCase):
     def test_chat_timeout_is_five_minutes(self):
         from botapp.services import NOYA_API_TIMEOUT
         self.assertEqual(NOYA_API_TIMEOUT, 300.0)
+
+
+class DirectTelegramDispatchTests(SimpleTestCase):
+    def test_replied_prompt_goes_verbatim_to_image_provider_without_translation(self):
+        from botapp.management.commands.runbot import _handle_reply_media_intent
+
+        m = message("نویا عکس پرامپت")
+        m.reply_to_message = SimpleNamespace(
+            text="A sleepy cat in an art studio", caption=None, rich_message=None,
+        )
+        m.reply = AsyncMock()
+        prepared = SimpleNamespace(images=[], transcript="", warnings=[])
+        with patch("botapp.management.commands.runbot._handle_noya_image_generation",
+                   new_callable=AsyncMock) as generate:
+            handled = async_to_sync(_handle_reply_media_intent)(m, "عکس پرامپت", prepared)
+        self.assertTrue(handled)
+        generate.assert_awaited_once_with(
+            m, "A sleepy cat in an art studio", direct_prompt=True,
+        )
+
+    def test_replied_text_routes_directly_to_tts(self):
+        from botapp.management.commands.runbot import _handle_reply_media_intent
+
+        m = message("نویا ویس")
+        m.reply_to_message = SimpleNamespace(
+            text="سلام عزیزم، خوبی؟", caption=None, rich_message=None,
+        )
+        m.reply = AsyncMock()
+        prepared = SimpleNamespace(images=[], transcript="", warnings=[])
+        with patch("botapp.management.commands.runbot._handle_noya_tts",
+                   new_callable=AsyncMock) as tts:
+            handled = async_to_sync(_handle_reply_media_intent)(m, "ویس", prepared)
+        self.assertTrue(handled)
+        tts.assert_awaited_once_with(m, "سلام عزیزم، خوبی؟")
+
+    def test_replied_voice_transcript_is_sent_as_text(self):
+        from botapp.management.commands.runbot import _handle_reply_media_intent
+
+        m = message("نویا متن")
+        m.reply_to_message = SimpleNamespace(text=None, caption=None, rich_message=None)
+        m.reply = AsyncMock()
+        prepared = SimpleNamespace(images=[], transcript="متن استخراج شده", warnings=[])
+        with patch("botapp.management.commands.runbot._reply_noya_transcript",
+                   new_callable=AsyncMock) as transcript:
+            handled = async_to_sync(_handle_reply_media_intent)(m, "متن", prepared)
+        self.assertTrue(handled)
+        transcript.assert_awaited_once_with(m, "متن استخراج شده", [])
+
+    def test_replied_photo_converts_to_real_telegram_sticker(self):
+        from botapp.management.commands.runbot import _handle_reply_media_intent
+        import io
+        from PIL import Image
+
+        original = io.BytesIO()
+        Image.new("RGB", (120, 50), "green").save(original, "JPEG")
+        m = message("نویا استیکر")
+        m.reply_to_message = SimpleNamespace(text=None, caption=None, rich_message=None)
+        m.reply = AsyncMock()
+        m.reply_sticker = AsyncMock()
+        prepared = SimpleNamespace(
+            images=[{"source": "reply", "data": original.getvalue(), "mime": "image/jpeg"}],
+            transcript="", warnings=[],
+        )
+        handled = async_to_sync(_handle_reply_media_intent)(m, "استیکر", prepared)
+        self.assertTrue(handled)
+        m.reply_sticker.assert_awaited_once()
+
+    def test_waiting_notice_is_one_message(self):
+        from botapp.management.commands.runbot import _noya_delayed_notice
+
+        m = message()
+        m.reply = AsyncMock()
+        with patch("botapp.management.commands.runbot.asyncio.sleep", new_callable=AsyncMock) as sleep:
+            async_to_sync(_noya_delayed_notice)(m)
+        sleep.assert_awaited_once_with(60)
+        m.reply.assert_awaited_once_with("یک لحظه صبر کن عزیزم")
+
+
+class PublicPhotoVisibilityTests(SimpleTestCase):
+    def test_replied_profile_is_request_local(self):
+        from botapp.noya_profile import requests_replied_profile_image
+        self.assertTrue(requests_replied_profile_image("عکس پروفایلش رو ببین"))
+        self.assertFalse(requests_replied_profile_image("عکس پروفایلم رو ببین"))
