@@ -84,9 +84,13 @@ def classify_social_event(text: str | None) -> EmotionalEvent | None:
     if _BEHAVIORAL.search(t):
         return EmotionalEvent("behavioral_improvement", confidence=0.75)
 
+    if _AFFECTION_CUES.search(t) and not _PLAYFUL_CUES.search(t):
+        # Explicit warmth should change the persistent relationship, not be
+        # reduced to an event with no effect on the stored emotional state.
+        return EmotionalEvent("affection", confidence=0.9)
     if playful:
-        # Friendly teasing, playful insults between familiar users and warm
-        # messages are never relationship damage.
+        # Friendly teasing, including affection combined with joke markers,
+        # is not a negative event or proof of a romantic relationship.
         return EmotionalEvent("playful_teasing", confidence=0.8)
 
     if _QUALITY_CRITICISM.search(t):
