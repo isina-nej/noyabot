@@ -97,6 +97,17 @@ def clear_nickname(chat_id: int, user_id: int) -> bool:
     ).exclude(nickname="").update(nickname=""))
 
 
+def purge_stale_identities(retention_days: int) -> int:
+    """Align observed identity retention with group archive maintenance.
+
+    This also expires self-chosen aliases after inactivity; no permanent
+    shadow identity table is created.
+    """
+    cutoff = timezone.now() - timedelta(days=max(1, int(retention_days)))
+    deleted, _ = NoyaObservedIdentity.objects.filter(updated_at__lt=cutoff).delete()
+    return deleted
+
+
 def forget_user_identities(user_id: int) -> int:
     deleted, _ = NoyaObservedIdentity.objects.filter(user_id=int(user_id)).delete()
     return deleted
