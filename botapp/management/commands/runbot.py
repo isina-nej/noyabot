@@ -101,14 +101,8 @@ ADMIN_IDS = frozenset(
     for value in os.getenv("ADMIN_IDS", "").split(",")
     if value.strip()
 )
-def parse_bot_tokens(bot_tokens: str = "", bot_token: str = "") -> tuple[str, ...]:
-    values = re.split(r"[\s,]+", bot_tokens.strip()) if bot_tokens.strip() else []
-    if bot_token.strip():
-        values.append(bot_token.strip())
-    return tuple(dict.fromkeys(value for value in values if value))
-
-
-BOT_TOKENS = parse_bot_tokens(os.getenv("BOT_TOKENS", ""), os.getenv("BOT_TOKEN", ""))
+# Re-exported for backward compatibility with tests and external callers.
+from botapp.telegram_config import BOT_TOKENS, parse_bot_tokens
 COLLAB_DISABLED_TEXT = "ادمین گزینه همکاری را غیر فعال کرده است."
 PROMPT_URL_PREFIX = os.getenv("PROMPT_URL_PREFIX", "https://ai.tinkera.org/chat/")
 AI_API_URL = os.getenv("AI_API_URL", "https://ai.tinkera.org/api/chat")
