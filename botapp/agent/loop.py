@@ -236,7 +236,7 @@ async def run_agent_loop(
         payload["stream"] = False
         request_started = time.perf_counter()
         ai_provider_request_begin(tool_model)
-        async with httpx.AsyncClient(timeout=120) as client:
+        async with httpx.AsyncClient(timeout=300.0) as client:
             try:
                 resp = await client.post(api_url, json=payload, headers=headers)
                 resp.raise_for_status()
