@@ -486,9 +486,19 @@ async def reply_noya_answer(message: Message, answer: str) -> None:
     """Send Noya's reply; prefer HTML so creator text-mentions stay clickable."""
     text = (answer or "").strip() or "…"
     try:
-        await message.reply(text, parse_mode="HTML")
+        sent = await message.reply(text, parse_mode="HTML")
     except TelegramBadRequest:
-        await message.reply(text)
+        sent = await message.reply(text)
+    try:
+        from botapp import bot_inbox
+        if bot_inbox.enabled() and sent is not None:
+            me = await message.bot.me()
+            await sync_to_async(bot_inbox.archive_manual_send, thread_sensitive=True)(
+                bot_id=int(me.id), chat_id=int(message.chat.id),
+                message=sent, text=text,
+            )
+    except Exception:
+        logger.debug("bot outgoing inbox capture failed", exc_info=True)
 
 
 def is_bot_mentioned(message: Message, bot_username: str) -> bool:
