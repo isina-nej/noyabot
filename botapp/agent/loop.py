@@ -24,6 +24,7 @@ from botapp.observability.instrumentation import (
 
 from .registry import registry
 from .responses import sanitize_outgoing_text
+from .tools import isolated_media_results, pop_media_result
 
 logger = logging.getLogger(__name__)
 
@@ -133,6 +134,7 @@ async def _dispatch_observed(tool_name: str, args: dict):
 
 
 @instrument_async("agent.loop")
+@isolated_media_results
 async def run_agent_loop(
     question: str,
     session_id: str,
@@ -403,12 +405,16 @@ async def run_agent_loop(
 
             used_tools.append(tool_name)
 
-            # ── Handle special results via cache ──
-            from botapp.agent.tools import _IMAGE_RESULT_CACHE, _TTS_RESULT_CACHE
-            if tool_name == "generate_image" and _IMAGE_RESULT_CACHE.get("last"):
-                metadata["generated_image_b64"] = _IMAGE_RESULT_CACHE.pop("last")
-            if tool_name == "text_to_speech" and _TTS_RESULT_CACHE.get("last"):
-                metadata["generated_tts_audio"] = _TTS_RESULT_CACHE.pop("last")
+            # This result is owned by this agent task, never another user's
+            # concurrent request. Tool-call IDs remain in the LLM transcript.
+            if tool_name == "generate_image":
+                image_b64 = pop_media_result("image")
+                if image_b64:
+                    metadata["generated_image_b64"] = image_b64
+            if tool_name == "text_to_speech":
+                audio_bytes = pop_media_result("tts")
+                if audio_bytes:
+                    metadata["generated_tts_audio"] = audio_bytes
 
             messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": str(result)[:4000]})
 
