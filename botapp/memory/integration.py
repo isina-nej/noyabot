@@ -318,6 +318,15 @@ async def run_ai_with_memory(
     self_profile = await opted_in_profile_context(message)
     if self_profile:
         enriched = enriched + "\n\n" + self_profile
+    try:
+        from botapp.noya_identity import nickname_context_for_message
+        identity_context = await sync_to_async(
+            nickname_context_for_message, thread_sensitive=True,
+        )(message)
+        if identity_context:
+            enriched += "\n\n" + identity_context
+    except Exception as exc:
+        logger.info("Sender display identity unavailable: %s", type(exc).__name__)
     relationship = await _relationship_context_for_message(message)
     if relationship:
         enriched = (
