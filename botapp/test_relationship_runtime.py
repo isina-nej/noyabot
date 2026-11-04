@@ -128,6 +128,7 @@ class RelationshipRuntimeTests(TestCase):
         self.assertEqual(first.warmth, old_warmth)
         self.assertTrue(captured[1]["authoritative"])
         self.assertEqual(captured[1]["relationship_status"], "neutral")
+        self.assertIn("قبلاً مهربانی نشان داده", captured[1]["tone_directive"])
 
     def test_model_quality_criticism_does_not_start_a_conflict(self):
         captured = []
