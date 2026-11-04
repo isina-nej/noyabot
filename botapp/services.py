@@ -564,7 +564,7 @@ async def edit_noya_image(instruction: str, image_data: bytes, image_mime: str =
     headers = {"Authorization": f"Bearer {api_key}", "Content-Type": "application/json"}
     try:
         t0 = monotonic()
-        async with httpx.AsyncClient(timeout=90.0) as client:
+        async with httpx.AsyncClient(timeout=NOYA_API_TIMEOUT) as client:
             resp = await client.post(base_url, headers=headers, json=payload)
             resp.raise_for_status()
             logger.info("[NOYA-TIMING] ✏️ Image edit took %.1fms", (monotonic() - t0) * 1000)
@@ -615,7 +615,7 @@ async def call_ai_api(
         ),
     }
     try:
-        async with httpx.AsyncClient(timeout=120.0) as client:
+        async with httpx.AsyncClient(timeout=NOYA_API_TIMEOUT) as client:
             response = await client.post(api_url, json=payload)
             response.raise_for_status()
             data = response.json()
@@ -734,7 +734,7 @@ async def generate_noya_tts(text: str, *, as_noya: bool = True) -> bytes | None:
 
     try:
         t0 = monotonic()
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=NOYA_API_TIMEOUT) as client:
             resp = await client.post(tts_url, headers=headers, json=payload)
             resp.raise_for_status()
             content_type = resp.headers.get("content-type", "")
