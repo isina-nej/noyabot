@@ -75,8 +75,12 @@ class StaticFetcher:
             transport = httpx.AsyncHTTPTransport(limits=limits)
             # Intercept socket connection to enforce DNS rebinding protection
             pool = getattr(transport, "_pool", None)
-            if pool is not None:
-                setattr(pool, "_network_backend", SafeNetworkBackend())
+            if pool is None or not hasattr(pool, "_network_backend"):
+                # httpx/httpcore internals changed: refuse network access
+                # rather than silently dropping the SSRF connection guard.
+                await transport.aclose()
+                raise WebFetchError("Secure HTTP transport unavailable")
+            setattr(pool, "_network_backend", SafeNetworkBackend())
             self._client = httpx.AsyncClient(
                 transport=transport,
                 headers=headers,
