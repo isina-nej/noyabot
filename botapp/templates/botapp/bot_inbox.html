@@ -163,11 +163,20 @@ async function loadOlder(){
 async function refreshMessages(){
   if(!state.chat||!state.bot||state.busy)return;
   const current={bot:state.bot,chat:state.chat};
-  const last=state.messages.length?Math.max(...state.messages.map(x=>Number(x.id))):0;
-  try{const d=await request("messages/?bot_id="+encodeURIComponent(current.bot)+"&chat_id="+encodeURIComponent(current.chat)+(last?"&after="+last:""));
+  try{
+    const d=await request("messages/?bot_id="+encodeURIComponent(current.bot)+"&chat_id="+encodeURIComponent(current.chat)+"&limit=60");
     if(current.bot!==state.bot||current.chat!==state.chat)return;
-    const ids=new Set(state.messages.map(x=>String(x.id)));const added=d.messages.filter(x=>!ids.has(String(x.id)));
-    if(added.length){state.messages.push(...added);messagesView(true)}
+    const existing=new Map(state.messages.map((x,i)=>[String(x.id),i]));
+    let changed=false,added=0;
+    for(const m of d.messages){
+      const i=existing.get(String(m.id));
+      if(i===undefined){state.messages.push(m);added++;changed=true}
+      else if(JSON.stringify(state.messages[i])!==JSON.stringify(m)){state.messages[i]=m;changed=true}
+    }
+    if(changed){
+      state.messages.sort((a,b)=>Number(a.id)-Number(b.id));
+      messagesView(added>0);
+    }
     el("sync").textContent="به‌روز شد · "+new Date().toLocaleTimeString("fa-IR");
   }catch(e){error(e.message)}
 }
