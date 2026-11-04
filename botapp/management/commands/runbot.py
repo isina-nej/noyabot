@@ -1221,6 +1221,41 @@ async def forget_all_memory(message: Message, command: CommandObject):
     await forget_all_command(message, action_reason(command))
 
 
+@router.message(Command("nickname"))
+async def nickname_command(message: Message, command: CommandObject):
+    """Only the authenticated Telegram sender can set their own chat nickname."""
+    from botapp.noya_identity import observe_identity
+    nickname = action_reason(command).strip()
+    if not nickname:
+        await message.reply("لقبت را این‌طور تنظیم کن: /nickname اسم دلخواه")
+        return
+    try:
+        # Parsing and validation share the same self-declaration code path.
+        from botapp.noya_identity import _nickname_from_text
+        if not _nickname_from_text("/nickname " + nickname):
+            await message.reply("لقب باید ۲ تا ۶۴ کاراکتر ساده باشد.")
+            return
+        stored = await sync_to_async(observe_identity, thread_sensitive=True)(message)
+        if stored:
+            await message.reply("لقبت برای همین گفتگو ثبت شد. برای پاک‌کردن /nickname_clear را بفرست.")
+        else:
+            await message.reply("نتوانستم لقب را ثبت کنم.")
+    except Exception:
+        logger.warning("Nickname save failed", exc_info=True)
+        await message.reply("ذخیره لقب فعلاً ممکن نیست.")
+
+
+@router.message(Command("nickname_clear"))
+async def nickname_clear_command(message: Message):
+    from botapp.noya_identity import clear_nickname
+    if not getattr(message, "from_user", None):
+        return
+    cleared = await sync_to_async(clear_nickname, thread_sensitive=True)(
+        int(message.chat.id), int(message.from_user.id),
+    )
+    await message.reply("لقب این گفتگو پاک شد." if cleared else "لقبی برای این گفتگو ذخیره نشده بود.")
+
+
 @router.message(Command("prompt"))
 async def prompt(message: Message, command: CommandObject):
     chat = message.chat
@@ -1938,7 +1973,15 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     # request to explain another person's question or private life.
     from botapp.noya_attention import quick_attention_reply
     attention = quick_attention_reply(message)
-    if attention:
+    # In opt-in archived groups, even a bare call should use recent context.
+    from django.conf import settings as _history_settings
+    from botapp.message_archive import archive_enabled as _history_archive_enabled
+    contextual_call = (
+        _history_archive_enabled()
+        and getattr(_history_settings, "NOYA_HISTORY_ENABLED", True)
+        and str(getattr(message.chat, "type", "")) in {"group", "supergroup"}
+    )
+    if attention and not contextual_call:
         await message.reply(attention)
         return
 
@@ -1951,6 +1994,14 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     from botapp.media_intake import prepare_media_for_noya, is_transcription_request
 
     media = await prepare_media_for_noya(message.bot, message)
+    # The media is already decoded for this turn: cache its transcript in the
+    # opt-in group archive instead of sending a duplicate STT job.
+    if media.transcript:
+        from botapp.noya_archive_media import save_prepared_media
+        try:
+            await save_prepared_media(message, media)
+        except Exception as exc:
+            logger.info("Archive media cache unavailable: %s", type(exc).__name__)
     images = media.images
     ask = (question or "").strip()
     t_chat_start = monotonic()
@@ -1984,7 +2035,15 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             return
         images = [replied_frame, *images][:3]
     # Attach reply-chain + recent group chatter so Noya can read the chat/tag target.
-    payload = build_noya_user_payload(message, ask, bot_username=bot_username)
+    from botapp.noya_history import archived_context_for_message
+    try:
+        history = await sync_to_async(archived_context_for_message, thread_sensitive=True)(message, ask)
+    except Exception as exc:
+        logger.warning("Noya group history unavailable: %s", type(exc).__name__)
+        history = ""
+    payload = build_noya_user_payload(
+        message, ask, bot_username=bot_username, archived_context=history,
+    )
     if media.context:
         # Untrusted attachment material is provided as data, not as instructions.
         payload += "\n\n" + media.context
