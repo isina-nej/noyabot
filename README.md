@@ -623,3 +623,21 @@ NOYA_SILENCE_ENABLED=false
 قدیمی باطل، فایل‌های جدید خارج از دایرکتوری Git قرار داده شوند و
 پیکربندی Deployment تغییر کند. حذف فایل‌ها از commit جدید به‌تنهایی
 تاریخچه را پاک نمی‌کند.
+
+## Telegram Web for Bots + private database inbox
+
+NoyaBot supports an **opt-in** per-bot archive of incoming private/group
+messages with a staff-only dashboard at `/inbox/`, chat list, message
+pagination, and optional verified send-as-bot. It runs within the existing
+aiogram polling dispatcher (no duplicate Bot API consumer).
+
+For the actual full Telegram Web-style MTProto frontend, use the GPL
+[ohld/telegram-web-for-bot](https://github.com/ohld/telegram-web-for-bot)
+project at a pinned source revision. This is intentionally **self-hosted under
+a separate origin** from the Django staff site. The upstream frontend
+only displays update-derived cached history; it is NOT a complete
+Telegram archive. NoyaBot's database inbox displays its own collected
+messages from the time archiving was explicitly enabled.
+
+Setup, safe authentication, migrations, Nginx, Docker Compose and privacy
+notes: [deploy/telegram-web-for-bot/README.md](deploy/telegram-web-for-bot/README.md).
