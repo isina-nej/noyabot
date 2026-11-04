@@ -2,7 +2,7 @@
 
 Security rules enforced:
   1. Internal-only: binds to 127.0.0.1 (never 0.0.0.0).
-  2. Optional Bearer token auth via X_BRIDGE_INTERNAL_TOKEN (401 on mismatch).
+  2. Mandatory Bearer token auth via X_BRIDGE_INTERNAL_TOKEN (401 otherwise).
   3. No CORS wildcard (local-only callers).
   4. Cookies never logged or returned in responses.
   5. Response size capped.
@@ -19,6 +19,7 @@ import json
 import logging
 import os
 import re
+import hmac
 from http.server import BaseHTTPRequestHandler, HTTPServer
 from pathlib import Path
 from urllib.parse import parse_qs, quote as urlquote, urlparse
@@ -26,7 +27,10 @@ from urllib.parse import parse_qs, quote as urlquote, urlparse
 import httpx
 
 PORT = int(os.getenv("X_BRIDGE_PORT", "8791"))
-COOKIE_FILE = Path(__file__).parent / "cookies.json"
+# Migrate the live cookie file OUTSIDE the Git checkout before rotation.
+COOKIE_FILE = Path(os.getenv(
+    "X_BRIDGE_COOKIES_FILE", str(Path(__file__).parent / "cookies.json")
+)).expanduser()
 BEARER = (
     "AAAAAAAAAAAAAAAAAAAAANRILgAAAAAAnNwIzUejRCOuH5E6I8xnZz4puTs"
     "=1Zv7ttfk8LF81IUq16cHjhLTvJu4FA33AGWWjCpTnA"
@@ -82,10 +86,10 @@ def x_get(url, cookies):
 def is_authorized(headers) -> bool:
     token = os.getenv("X_BRIDGE_INTERNAL_TOKEN", "").strip()
     if not token:
-        return True  # Auth not required if internal token not set
+        return False  # fail closed: no configured secret, no access
     auth = headers.get("Authorization", "")
     expected = f"Bearer {token}"
-    return auth == expected
+    return hmac.compare_digest(str(auth), expected)
 
 
 def sanitize_handle(h: str) -> str:
