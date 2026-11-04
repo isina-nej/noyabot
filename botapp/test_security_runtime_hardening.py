@@ -216,7 +216,7 @@ class ProductionConfigurationTests(SimpleTestCase):
 
     def test_sync_harness_execution_denied_in_production(self):
         from botapp.harness.executor import HarnessExecutor
-        from botapp.harness.errors import StepTimeoutError
+        from botapp.harness.executor import StepTimeoutError
 
         with patch.dict(os.environ, {
             "NOYA_ENVIRONMENT": "production",
