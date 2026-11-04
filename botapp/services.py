@@ -242,6 +242,7 @@ async def call_noya_api(
     speaker_name: str = "",
     images: list[dict] | None = None,
     social_context: dict | None = None,
+    reaction_allowed: bool = False,
     use_agent: bool = True,
 ) -> tuple[str, dict]:
     """Hermes-style: call agent loop with tools, fall back to direct API."""
@@ -273,6 +274,7 @@ async def call_noya_api(
             speaker_name=speaker_name,
             images=images,
             social_context=social_context,
+            reaction_allowed=reaction_allowed,
         )
         # Outbound gate: provider planning annotations must never be delivered.
         from botapp.agent.responses import sanitize_outgoing_text
@@ -283,7 +285,8 @@ async def call_noya_api(
             "[NOYA-TIMING] 🤖 Agent loop done in %.1fms (total=%.1fms, tools=%s)",
             agent_ms, total_ms, metadata.get("tools_used", []),
         )
-        return reply or "پاسخی از هوش مصنوعی دریافت نشد.", metadata
+        return (reply if metadata.get("reaction_emoji") else
+                (reply or "پاسخی از هوش مصنوعی دریافت نشد.")), metadata
 
     # ── Fallback: direct API call (old path) ──
     return await _call_noya_api_direct(question, session_id, speaker_user_id=speaker_user_id, speaker_name=speaker_name, images=images, social_context=social_context)
