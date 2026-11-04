@@ -112,6 +112,14 @@ USE_TZ = True
 
 STATIC_URL = "static/"
 STATIC_ROOT = BASE_DIR / "staticfiles"
+
+# Explicitly opt in to private/group message archival and staff-only inbox.
+# New records are separated by the *actual* Telegram bot id.
+BOT_INBOX_ENABLED = os.getenv("BOT_INBOX_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+BOT_INBOX_SEND_ENABLED = os.getenv("BOT_INBOX_SEND_ENABLED", "false").lower() in {"1", "true", "yes", "on"}
+BOT_INBOX_RETENTION_DAYS = int(os.getenv("BOT_INBOX_RETENTION_DAYS", "30"))
+BOT_WEB_URL = os.getenv("BOT_WEB_URL", "").strip()
+
 DEFAULT_AUTO_FIELD = "django.db.models.BigAutoField"
 
 MEMORY_SHORT_TERM_TTL_HOURS = int(os.getenv("SHORT_TERM_TTL_HOURS", "24"))
