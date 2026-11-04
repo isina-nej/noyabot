@@ -39,7 +39,7 @@ class VerifiedSocialRoleTests(SimpleTestCase):
         instructions = verified_social_instruction(result)
         self.assertIn("سینا", instructions)
         self.assertIn("سازنده", instructions)
-        self.assertIn("حامی", instructions)
+        self.assertIn("خودمانی", instructions)
         # Creator knows a configured identity without falsely asserting marriage.
         self.assertIn("بتول", instructions)
         self.assertIn("1617351320", instructions)
