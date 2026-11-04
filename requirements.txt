@@ -1,8 +1,8 @@
 aiogram>=3.22,<4
 Telethon>=1.36,<2
-django==5.2.16
+django==5.2.17
 httpx==0.28.1
-Pillow>=10.0,<12
+Pillow==13.0.0
 # Used directly by the admin agent for strict structured-output validation.
 # Pinned range matches what aiogram 3.x depends on; declared explicitly so we
 # do not rely on a transitive dependency.
