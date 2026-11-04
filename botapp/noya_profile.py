@@ -177,3 +177,37 @@ def requests_my_profile_image(question: str) -> bool:
     return ("عکس پروفایل" in t or "عکس پروفایلم" in t or "پروفایل پیکچر" in t) and (
         "من" in t or "خودم" in t or "پروفایلم" in t
     ) and any(x in t for x in ("ببین", "تحلیل", "نظر", "توصیف", "چطوره", "چه شکلی", "نگاه"))
+
+
+def requests_replied_profile_image(question: str) -> bool:
+    """Explicit request to look at the visible photo of a replied-to sender."""
+    text = (question or "").casefold()
+    return (
+        ("عکس پروفایل" in text or "پروفایلش" in text or "profile picture" in text)
+        and any(k in text for k in ("ببین", "تحلیل", "نظر", "توصیف", "نگاه", "چطوره", "describe"))
+        and not requests_my_profile_image(question)
+    )
+
+
+async def replied_user_profile_image(message) -> dict | None:
+    """Use only the visible photo for the actual replied-to user; do not persist."""
+    replied = getattr(message, "reply_to_message", None)
+    target = getattr(replied, "from_user", None)
+    if target is None or getattr(target, "is_bot", False):
+        return None
+    try:
+        photos = await message.bot.get_user_profile_photos(
+            user_id=int(target.id), offset=0, limit=1,
+        )
+        if not photos.photos or not photos.photos[0]:
+            return None
+        file_id = photos.photos[0][-1].file_id
+        from botapp.telegram_media import _download_file_bytes, normalize_image_bytes
+        raw = await _download_file_bytes(message.bot, file_id)
+        if not raw:
+            return None
+        mime, frame = normalize_image_bytes(raw)
+        return {"mime": mime, "data": frame, "source": "replied_visible_profile_photo"}
+    except Exception as exc:
+        logger.info("Replied profile photo unavailable: %s", type(exc).__name__)
+        return None
