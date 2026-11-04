@@ -8,9 +8,38 @@ from .registry import Tool, registry
 TEHRAN_TZ = ZoneInfo("Asia/Tehran")
 IRST = timezone(timedelta(hours=3, minutes=30))
 
-# Shared cache for tool results that need to cross back to runbot.py
-_IMAGE_RESULT_CACHE: dict[str, str] = {}
-_TTS_RESULT_CACHE: dict[str, bytes] = {}
+# Keep binary results inside the *current agent invocation*, never in a
+# process-global dict with a shared key (cross-user result leak).
+from contextvars import ContextVar
+from functools import wraps
+from typing import Any, Callable
+
+_MEDIA_RESULTS: ContextVar[dict[str, Any] | None] = ContextVar(
+    "noya_request_media_results", default=None
+)
+
+
+def isolated_media_results(async_func: Callable):
+    """Provide a fresh request-owned result bag throughout one agent turn."""
+    @wraps(async_func)
+    async def wrapper(*args, **kwargs):
+        token = _MEDIA_RESULTS.set({})
+        try:
+            return await async_func(*args, **kwargs)
+        finally:
+            _MEDIA_RESULTS.reset(token)
+    return wrapper
+
+
+def _store_media_result(kind: str, payload: Any) -> None:
+    results = _MEDIA_RESULTS.get()
+    if results is not None:
+        results[kind] = payload
+
+
+def pop_media_result(kind: str):
+    results = _MEDIA_RESULTS.get()
+    return results.pop(kind, None) if results is not None else None
 
 # ── URL helpers ──
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
@@ -131,7 +160,7 @@ async def _generate_image(prompt: str = "") -> str:
     # Store raw bytes for runbot to pick up, return text for LLM
     import base64
     _b64 = base64.b64encode(img_bytes).decode()
-    _IMAGE_RESULT_CACHE["last"] = _b64
+    _store_media_result("image", _b64)
     return f"تصویر با موفقیت تولید شد ({len(img_bytes)} bytes). در حال ارسال..."
 
 
@@ -140,7 +169,7 @@ async def _text_to_speech(text: str = "") -> str:
     audio = await generate_noya_tts(text)
     if not audio:
         return "خطا در تولید صدا."
-    _TTS_RESULT_CACHE["last"] = audio
+    _store_media_result("tts", audio)
     return f"صدا با موفقیت تولید شد ({len(audio)} bytes). در حال ارسال..."
 
 
