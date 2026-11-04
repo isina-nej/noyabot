@@ -184,3 +184,39 @@ class InboxApiTests(TestCase):
         self.assertNotIn("secret for bot 222",page)
         self.assertNotIn("<script>alert(1)</script>",page)
         self.assertNotIn("111:dummy",page)
+
+
+class LegacyGroupImportTests(TestCase):
+    def test_explicit_dry_run_then_verified_group_import(self):
+        from io import StringIO
+        from django.core.management import call_command
+        from botapp.models import MessageSnapshot
+
+        MessageSnapshot.objects.create(
+            chat_id=-10033, message_id=51, text="legacy group content",
+            sender_name="Member", content_type="text",
+        )
+        stdout=StringIO()
+        call_command("import_legacy_group_inbox", "--bot-id", "111",
+                     "--chat-id", "-10033", stdout=stdout)
+        self.assertIn("DRY RUN", stdout.getvalue())
+        self.assertEqual(BotInboxMessage.objects.count(), 0)
+
+        call_command("import_legacy_group_inbox", "--bot-id", "111",
+                     "--chat-id", "-10033", "--apply", stdout=StringIO())
+        row=BotInboxMessage.objects.get(bot_id=111,chat_id=-10033)
+        self.assertEqual(row.text,"legacy group content")
+        self.assertFalse(BotInboxMessage.objects.filter(bot_id=222).exists())
+
+        # Import can be replayed without creating duplicate group messages.
+        call_command("import_legacy_group_inbox", "--bot-id", "111",
+                     "--chat-id", "-10033", "--apply", stdout=StringIO())
+        self.assertEqual(BotInboxMessage.objects.count(), 1)
+
+    def test_legacy_import_rejects_private_chat(self):
+        from io import StringIO
+        from django.core.management import call_command, CommandError
+
+        with self.assertRaises(CommandError):
+            call_command("import_legacy_group_inbox", "--bot-id", "111",
+                         "--chat-id", "777", "--apply", stdout=StringIO())
