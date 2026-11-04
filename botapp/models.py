@@ -582,6 +582,9 @@ class NoyaRelationshipState(models.Model):
     repair_progress = models.PositiveSmallIntegerField(
         default=0, validators=[MinValueValidator(0), MaxValueValidator(100)]
     )
+    # Fractional elapsed decay survives high-frequency DB reads. The integer
+    # score is decremented only after the accumulated fraction reaches 1.
+    decay_fraction = models.FloatField(default=0.0)
     warmth = models.PositiveSmallIntegerField(
         default=55, validators=[MinValueValidator(0), MaxValueValidator(100)]
     )
