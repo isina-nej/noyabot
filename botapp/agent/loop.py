@@ -143,6 +143,7 @@ async def run_agent_loop(
     speaker_name: str = "",
     images: list[dict] | None = None,
     social_context: dict | None = None,
+    reaction_allowed: bool = False,
     on_token=None,
 ) -> tuple[str, dict]:
     """Run the Hermes-style agent loop.
@@ -167,6 +168,9 @@ async def run_agent_loop(
 
     messages: list[dict[str, Any]] = []
     if system_prompt:
+        if reaction_allowed:
+            from botapp.noya_reactions import reaction_instruction
+            system_prompt += "\n\n" + reaction_instruction()
         from botapp.noya_social_roles import verified_social_instruction
         social_block = verified_social_instruction(social_context)
         if social_block:
@@ -302,6 +306,12 @@ async def run_agent_loop(
         # ── No tool calls → done ──
         tool_calls = msg.get("tool_calls")
         if not tool_calls:
+            if reaction_allowed and not used_tools and isinstance(raw_content, str):
+                from botapp.noya_reactions import extract_reaction
+                emoji = extract_reaction(raw_content, allowed=True)
+                if emoji:
+                    metadata["reaction_emoji"] = emoji
+                    return "", metadata
             final_text = sanitize_outgoing_text(raw_content)
             if not final_text:
                 # Never fall back to the raw text: it may be nothing but an
