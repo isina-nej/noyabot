@@ -19,13 +19,26 @@ def classify_reply_command(ask: str, *, has_reply: bool) -> str | None:
     if not has_reply:
         return None
     cmd = _SHORT.sub(" ", (ask or "").casefold().strip(" \t\n\r!؟?.,،:")).strip()
-    if cmd in _REPLY_IMAGE:
+    if cmd in _REPLY_IMAGE or cmd in {
+        "با این متن عکس بساز", "از این متن عکس بساز", "عکس همین پرامپت",
+        "عکس پرامپت این پیام", "این متن رو عکس کن",
+    }:
         return "image"
-    if cmd in _REPLY_VOICE:
+    if cmd in _REPLY_VOICE or cmd in {
+        "این متن رو ویس کن", "این پیام رو ویس کن", "متن این پیام رو بخون",
+        "این متنو ویس کن", "این رو ویس کن",
+    }:
         return "voice"
-    if cmd in _REPLY_TEXT:
+    if cmd in _REPLY_TEXT or cmd in {
+        "این ویس رو متن کن", "این صدا رو متن کن", "متنش کن",
+        "متن این ویس", "پیاده کن",
+    }:
         return "text"
-    if cmd in _REPLY_STICKER:
+    if cmd in _REPLY_STICKER or cmd in {
+        "این عکس رو استیکر کن", "عکس رو استیکر کن", "از این عکس استیکر بساز",
+        "این عکسو استیکر کن", "تبدیلش کن به استیکر",
+        "از این تصویر استیکر بساز",
+    }:
         return "sticker"
     return None
 
