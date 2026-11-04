@@ -2044,6 +2044,9 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         waiting_notice.cancel()
         await asyncio.gather(waiting_notice, return_exceptions=True)
     t_reply = monotonic()
+    # Explicitly allowed low-stakes group silence is not a Telegram reply.
+    if agent_metadata.get("no_reply") and not is_analysis:
+        return
     # A trusted model reaction is an alternative to a text reply, never a
     # substitute for analysis or any generated attachment.
     emoji = agent_metadata.get("reaction_emoji")
