@@ -1421,6 +1421,64 @@ async def _handle_noya_tts(message: Message, text: str, *, as_noya: bool = True)
         await message.reply("ویس ساخته شد ولی در ارسال خطایی پیش اومد.")
 
 
+async def _handle_reply_media_intent(message: Message, ask: str, media) -> bool:
+    """Execute user-selected reply commands without LLM prompt rewriting."""
+    from botapp.noya_reply_media import classify_reply_command, selected_reply_text
+    from botapp.noya_sticker import image_to_webp_sticker
+
+    action = classify_reply_command(
+        ask, has_reply=bool(getattr(message, "reply_to_message", None)),
+    )
+    if action is None:
+        return False
+    quoted = selected_reply_text(message)
+    if action == "image":
+        if not quoted:
+            await message.reply("روی یک پیام متنی ریپلای کن تا همون متن رو مستقیم به عکس‌ساز بفرستم.")
+            return True
+        await _handle_noya_image_generation(message, quoted, direct_prompt=True)
+        return True
+    if action == "voice":
+        if not quoted:
+            await message.reply("روی پیام متنی ریپلای کن تا متن خودش رو ویس کنم.")
+            return True
+        await _handle_noya_tts(message, quoted)
+        return True
+    if action == "text":
+        if media.transcript:
+            await _reply_noya_transcript(message, media.transcript, media.warnings)
+        elif quoted:
+            for offset in range(0, len(quoted), 3900):
+                await message.reply(quoted[offset:offset + 3900])
+        else:
+            await message.reply("روی ویس یا پیام متنی ریپلای کن تا متنش رو بفرستم.")
+        return True
+    if action == "sticker":
+        reply_img = next(
+            (i for i in media.images if i.get("source") == "reply"), None,
+        )
+        if not reply_img:
+            await message.reply("روی عکس یا تصویر ریپلای کن تا به استیکر تبدیلش کنم.")
+            return True
+        try:
+            sticker_data = await asyncio.to_thread(image_to_webp_sticker, reply_img["data"])
+            await message.reply_sticker(BufferedInputFile(sticker_data, filename="noya.webp"))
+        except (ValueError, TelegramAPIError) as exc:
+            logger.warning("Noya sticker conversion failed: %s", type(exc).__name__)
+            await message.reply("ساخت یا ارسال استیکر ممکن نشد؛ یک عکس معمولی بفرست.")
+        return True
+    return False
+
+
+async def _noya_delayed_notice(message: Message) -> None:
+    """One user-visible waiting reply only if an operation crosses 60 seconds."""
+    await asyncio.sleep(60)
+    try:
+        await message.reply("یک لحظه صبر کن عزیزم")
+    except TelegramAPIError as exc:
+        logger.warning("Noya waiting notice failed: %s", type(exc).__name__)
+
+
 @router.message(Command("profile_save"))
 async def profile_save_command(message: Message):
     """Explicitly opt-in to self profile storage in private chat."""
