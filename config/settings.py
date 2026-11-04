@@ -7,26 +7,39 @@ from dotenv import load_dotenv
 BASE_DIR = Path(__file__).resolve().parent.parent
 load_dotenv(BASE_DIR / ".env")
 
-# DEBUG default: when unset, stay local-friendly for SQLite and secure-by-default
-# for non-SQLite (typical production). Explicit DEBUG= always wins.
+# Explicit production mode is independent of the database engine.
+# Legacy local development remains compatible; deployments must set
+# NOYA_ENVIRONMENT=production to enforce fail-closed startup checks.
+NOYA_ENVIRONMENT = os.getenv("NOYA_ENVIRONMENT", "development").strip().casefold()
 _debug_env = os.getenv("DEBUG")
-if _debug_env is None:
-    _db_engine = os.getenv("DB_ENGINE", "django.db.backends.sqlite3")
-    DEBUG = _db_engine.endswith("sqlite3")
+if NOYA_ENVIRONMENT == "production":
+    DEBUG = _debug_env is not None and _debug_env.lower() in {"1", "true", "yes", "on"}
 else:
-    DEBUG = _debug_env.lower() in {"1", "true", "yes", "on"}
+    if _debug_env is None:
+        _db_engine = os.getenv("DB_ENGINE", "django.db.backends.sqlite3")
+        DEBUG = _db_engine.endswith("sqlite3")
+    else:
+        DEBUG = _debug_env.lower() in {"1", "true", "yes", "on"}
+if NOYA_ENVIRONMENT == "production" and DEBUG:
+    raise ImproperlyConfigured("DEBUG must be false in production.")
 SECRET_KEY = os.getenv(
     "DJANGO_SECRET_KEY",
     "django-insecure-development-only-change-me",
 )
 if not DEBUG and SECRET_KEY.startswith("django-insecure-"):
     raise ImproperlyConfigured("DJANGO_SECRET_KEY must be set when DEBUG is false.")
+if NOYA_ENVIRONMENT == "production" and (
+    len(SECRET_KEY) < 32 or SECRET_KEY.startswith("replace-")
+):
+    raise ImproperlyConfigured("A strong DJANGO_SECRET_KEY is required in production.")
 
 ALLOWED_HOSTS = [
     host.strip()
     for host in os.getenv("ALLOWED_HOSTS", "localhost,127.0.0.1").split(",")
     if host.strip()
 ]
+if NOYA_ENVIRONMENT == "production" and "*" in ALLOWED_HOSTS:
+    raise ImproperlyConfigured("Wildcard ALLOWED_HOSTS is not permitted in production.")
 
 INSTALLED_APPS = [
     "django.contrib.admin",
