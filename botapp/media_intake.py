@@ -153,7 +153,7 @@ async def transcribe_audio(raw: bytes, *, suffix: str = ".ogg", mime: str = "") 
     # Always send an allowlisted name, never the user-supplied filename.
     content_type = mime if mime.startswith("audio/") else "application/octet-stream"
     headers = {"Authorization": f"Bearer {key}"} if key else {}
-    timeout = httpx.Timeout(_limit("NOYA_STT_TIMEOUT", 90, 10, 240))
+    timeout = httpx.Timeout(_limit("NOYA_STT_TIMEOUT", 300, 10, 300))
     try:
         async with httpx.AsyncClient(timeout=timeout) as client:
             response = await client.post(
