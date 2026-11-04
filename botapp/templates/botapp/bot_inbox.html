@@ -1,0 +1,176 @@
+<!doctype html>
+<html lang="fa" dir="rtl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <meta name="csrf-token" content="{{ csrf_token }}">
+  <title>NoyaBot · صندوق پیام‌ها</title>
+  <style>
+    :root{color-scheme:light;--bg:#dfe8ed;--panel:#fff;--accent:#3390ec;--hover:#f0f5f8;--muted:#72808e;--bubble:#e5ffd8;--border:#e7eef2}
+    *{box-sizing:border-box}html,body{margin:0;height:100%;font-family:Tahoma,Arial,sans-serif;color:#17212b}
+    .app{height:100dvh;display:grid;grid-template-columns:340px minmax(0,1fr);background:var(--bg);direction:rtl}
+    .sidebar{background:var(--panel);border-left:1px solid var(--border);min-width:0;display:flex;flex-direction:column}
+    .head{padding:16px;border-bottom:1px solid var(--border);display:flex;justify-content:space-between;align-items:center;gap:10px}
+    .head h1{font-size:16px;margin:0}.sub{color:var(--muted);font-size:11px}
+    a{color:var(--accent);text-decoration:none}
+    .toolbar{padding:11px 14px;display:flex;gap:8px;flex-direction:column}
+    select,input,textarea,button{font:inherit}select,.search{background:var(--hover);border:0;border-radius:10px;padding:12px;width:100%;outline-color:var(--accent)}
+    button{cursor:pointer;border:0;border-radius:9px;padding:10px 14px;background:var(--accent);color:white}
+    button:disabled{opacity:.45;cursor:not-allowed}
+    .chats{overflow:auto;flex:1}.chat{width:100%;border:0;border-radius:0;text-align:right;background:transparent;color:inherit;padding:14px 16px;display:flex;align-items:center;gap:11px;border-bottom:1px solid #f7f9fa}
+    .chat:hover{background:var(--hover)}.chat.active{background:#eaf5ff}
+    .avatar{width:43px;height:43px;flex-shrink:0;border-radius:50%;background:#c6deed;display:grid;place-items:center;color:#396680;font-size:18px}
+    .chat-inner{flex:1;min-width:0}.chat-title{font-size:14px;font-weight:bold;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .preview{font-size:12px;color:var(--muted);margin-top:4px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+    .main{display:flex;flex-direction:column;min-width:0}
+    .main-header{background:white;padding:13px 20px;border-bottom:1px solid var(--border);height:65px;display:flex;align-items:center;justify-content:space-between}
+    .main-header strong{display:block}.messages{flex:1;overflow:auto;padding:18px max(12px,calc((100% - 820px)/2));display:flex;flex-direction:column;gap:7px}
+    .message{max-width:min(80%,600px);align-self:flex-start;padding:9px 12px;border-radius:13px 13px 13px 4px;background:white;box-shadow:0 1px 2px #0001;min-width:130px}
+    .message.outgoing{align-self:flex-end;background:var(--bubble);border-radius:13px 13px 4px 13px}
+    .sender{font-size:11px;color:#338bd5;font-weight:bold;margin-bottom:4px}.body{font-size:14px;line-height:1.65;white-space:pre-wrap;overflow-wrap:anywhere}
+    .date{font-size:10px;text-align:left;color:var(--muted);margin-top:6px}.media{display:inline-block;color:#5f7e9b;font-size:12px;margin-bottom:3px}
+    .composer{display:flex;padding:14px;gap:8px;align-items:flex-end;background:#f5f8fa;border-top:1px solid var(--border)}
+    textarea{width:100%;min-height:42px;max-height:140px;padding:12px;border:1px solid var(--border);border-radius:10px;resize:vertical;outline-color:var(--accent)}
+    .notice{padding:8px 15px;text-align:center;color:var(--muted);font-size:12px}
+    .load{align-self:center;padding:6px 12px;font-size:12px;background:#ffffffcf;color:#357dc1}
+    .error{color:#b63f41}.hidden{display:none!important}
+    @media(max-width:700px){.app{grid-template-columns:1fr}.sidebar{display:none}.app.show-list .sidebar{display:flex}.app.show-list .main{display:none}.main-header{padding:10px}.mobile-back{display:inline!important}}
+    .mobile-back{display:none;background:transparent;color:var(--accent);font-size:20px}
+  </style>
+</head>
+<body>
+<div id="app" class="app show-list">
+  <aside class="sidebar" aria-label="فهرست گفتگوها">
+    <header class="head"><div><h1>پیام‌های NoyaBot</h1><div class="sub">آرشیو دیتابیس · فقط مدیران مجاز</div></div>
+      {% if bot_web_url %}<a href="{{ bot_web_url }}" target="_blank" rel="noopener noreferrer" title="نمای زنده Telegram Web">Telegram Web</a>{% endif %}
+    </header>
+    <div class="toolbar">
+      <select id="bots" aria-label="انتخاب ربات"><option>در حال بارگذاری...</option></select>
+      <input id="search" class="search" type="search" placeholder="جست‌وجو در گفتگوهای موجود" autocomplete="off">
+    </div>
+    <div id="chats" class="chats"></div>
+    <div class="notice" id="inbox-summary"></div>
+  </aside>
+  <main class="main">
+    <div class="main-header">
+      <div style="display:flex;gap:8px;align-items:center">
+        <button class="mobile-back" id="back" aria-label="بازگشت به فهرست">☰</button>
+        <div><strong id="title">یک گفتگو را انتخاب کنید</strong><span class="sub" id="subtitle">پیام‌های دریافت‌شده از زمان فعال‌سازی آرشیو</span></div>
+      </div>
+      <span class="sub" id="sync">—</span>
+    </div>
+    <div class="messages" id="messages">
+      <div class="notice">گفتگوها از دیتابیس نویا خوانده می‌شوند، نه تاریخچه کامل سرور تلگرام.</div>
+    </div>
+    <div class="composer">
+      <textarea id="draft" placeholder="{% if allow_send %}پیام را بنویسید...{% else %}ارسال غیرفعال است؛ BOT_INBOX_SEND_ENABLED را تنظیم کنید{% endif %}"
+        aria-label="متن پاسخ" {% if not allow_send %}disabled{% endif %}></textarea>
+      <button id="send" {% if not allow_send %}disabled{% endif %}>ارسال</button>
+    </div>
+    <div id="error" class="notice error" role="status" aria-live="polite"></div>
+  </main>
+</div>
+<script>
+"use strict";
+const API="/inbox/api/", el=(id)=>document.getElementById(id);
+const state={bot:null,chat:null,chats:[],messages:[],busy:false};
+const request=async(path,options={})=>{
+  const response=await fetch(API+path,{credentials:"same-origin",cache:"no-store",...options});
+  let data;try{data=await response.json()}catch{throw Error("پاسخ سرور قابل خواندن نیست")}
+  if(!response.ok)throw Error(data.error||"درخواست ناموفق بود");
+  return data;
+};
+const error=(msg)=>{el("error").textContent=msg||""};
+const shortDate=(d)=>{try{return new Date(d).toLocaleString("fa-IR",{hour:"2-digit",minute:"2-digit"})}catch{return ""}};
+function chatsView(){
+  const container=el("chats");container.replaceChildren();
+  const q=el("search").value.toLocaleLowerCase();
+  const visible=state.chats.filter(x=>(x.title+" "+x.preview).toLocaleLowerCase().includes(q));
+  if(!visible.length){container.textContent="گفتگویی در آرشیو پیدا نشد";return}
+  visible.forEach(c=>{
+    const button=document.createElement("button");button.className="chat"+(state.chat===c.id?" active":"");
+    const avatar=document.createElement("div");avatar.className="avatar";avatar.textContent=(c.type==="private"?"👤":c.type==="channel"?"📢":"👥");
+    const inner=document.createElement("div");inner.className="chat-inner";
+    const title=document.createElement("div");title.className="chat-title";title.textContent=c.title;
+    const prev=document.createElement("div");prev.className="preview";prev.textContent=c.preview||"پیام غیرمتنی";
+    inner.append(title,prev);button.append(avatar,inner);
+    button.addEventListener("click",()=>openChat(c));container.append(button);
+  });
+}
+function messagesView(scrollBottom=false){
+  const container=el("messages");const oldHeight=container.scrollHeight,oldTop=container.scrollTop;
+  container.replaceChildren();
+  if(state.messages.length===0){const empty=document.createElement("p");empty.className="notice";empty.textContent="هنوز پیامی آرشیو نشده";container.append(empty);return}
+  const older=document.createElement("button");older.className="load";older.textContent="نمایش پیام‌های قدیمی‌تر";
+  older.addEventListener("click",loadOlder);container.append(older);
+  state.messages.forEach(m=>{
+    const bubble=document.createElement("article");bubble.className="message"+(m.outgoing?" outgoing":"");
+    if(!m.outgoing){const who=document.createElement("div");who.className="sender";who.textContent=m.sender_name||m.sender_username||m.sender_id||"کاربر";bubble.append(who)}
+    if(m.type!=="text"&&m.type!=="caption"){const media=document.createElement("div");media.className="media";media.textContent="📎 "+m.type;bubble.append(media)}
+    const body=document.createElement("div");body.className="body";body.textContent=m.text||m.caption||"[پیام رسانه‌ای]";
+    const clock=document.createElement("div");clock.className="date";clock.textContent=shortDate(m.date)+(m.edited?" · ویرایش شده":"");
+    bubble.append(body,clock);container.append(bubble);
+  });
+  if(scrollBottom)container.scrollTop=container.scrollHeight;
+  else container.scrollTop=container.scrollHeight-oldHeight+oldTop;
+}
+async function openChat(c){
+  state.chat=c.id;state.messages=[];
+  el("title").textContent=c.title;el("subtitle").textContent=c.type+" · شناسه "+c.id;
+  el("messages").textContent="در حال دریافت پیام‌ها...";el("app").classList.remove("show-list");
+  chatsView();
+  try{const bot=state.bot,chat=c.id;const d=await request("messages/?bot_id="+encodeURIComponent(bot)+"&chat_id="+encodeURIComponent(chat));if(state.chat!==chat||state.bot!==bot)return;state.messages=d.messages;messagesView(true)}catch(e){error(e.message)}
+}
+async function refreshChats(){
+  if(!state.bot)return;
+  try{const selected=state.bot;const d=await request("chats/?bot_id="+encodeURIComponent(selected));
+    if(state.bot!==selected)return;state.chats=d.chats;chatsView();el("inbox-summary").textContent=d.chats.length+" گفتگو در آرشیو";}
+  catch(e){error(e.message)}
+}
+async function loadOlder(){
+  if(!state.chat||!state.messages.length)return;
+  const first=Math.min(...state.messages.map(x=>Number(x.id)));
+  try{const d=await request("messages/?bot_id="+encodeURIComponent(state.bot)+"&chat_id="+encodeURIComponent(state.chat)+"&before="+first);
+    const ids=new Set(state.messages.map(x=>String(x.id)));state.messages=[...d.messages.filter(x=>!ids.has(String(x.id))),...state.messages];messagesView(false)}
+  catch(e){error(e.message)}
+}
+async function refreshMessages(){
+  if(!state.chat||!state.bot||state.busy)return;
+  const current={bot:state.bot,chat:state.chat};
+  const last=state.messages.length?Math.max(...state.messages.map(x=>Number(x.id))):0;
+  try{const d=await request("messages/?bot_id="+encodeURIComponent(current.bot)+"&chat_id="+encodeURIComponent(current.chat)+(last?"&after="+last:""));
+    if(current.bot!==state.bot||current.chat!==state.chat)return;
+    const ids=new Set(state.messages.map(x=>String(x.id)));const added=d.messages.filter(x=>!ids.has(String(x.id)));
+    if(added.length){state.messages.push(...added);messagesView(true)}
+    el("sync").textContent="به‌روز شد · "+new Date().toLocaleTimeString("fa-IR");
+  }catch(e){error(e.message)}
+}
+async function send(){
+  if(!state.bot||!state.chat||state.busy)return;
+  const text=el("draft").value.trim();if(!text)return;
+  state.busy=true;el("send").disabled=true;error("");
+  try{const data=await request("send/",{method:"POST",headers:{"Content-Type":"application/json","X-CSRFToken":document.querySelector('meta[name="csrf-token"]').content},body:JSON.stringify({bot_id:state.bot,chat_id:state.chat,text})});
+    el("draft").value="";const id=String(data.message.id);
+    if(!state.messages.some(x=>String(x.id)===id))state.messages.push(data.message);
+    messagesView(true);refreshChats();}
+  catch(e){error(e.message)}
+  finally{state.busy=false;el("send").disabled=false}
+}
+async function boot(){
+  try{const d=await request("bots/");const select=el("bots");select.replaceChildren();
+    if(!d.bots.length){const opt=document.createElement("option");opt.textContent="فعلاً پیامی ثبت نشده";select.append(opt);return}
+    d.bots.forEach(b=>{const opt=document.createElement("option");opt.value=b.id;opt.textContent="ربات "+b.id+" · "+b.chats+" گفتگو";select.append(opt)});
+    state.bot=d.bots[0].id;select.value=state.bot;
+    select.addEventListener("change",()=>{state.bot=select.value;state.chat=null;state.messages=[];el("title").textContent="گفتگو را انتخاب کنید";refreshChats()});
+    await refreshChats();
+  }catch(e){error(e.message)}
+}
+el("search").addEventListener("input",chatsView);
+el("send").addEventListener("click",send);
+el("back").addEventListener("click",()=>el("app").classList.add("show-list"));
+el("draft").addEventListener("keydown",e=>{if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();send()}});
+boot();
+setInterval(()=>{refreshChats();refreshMessages()},7000);
+</script>
+</body>
+</html>
