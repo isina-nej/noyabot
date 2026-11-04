@@ -44,6 +44,12 @@ def snapshot_payload(message) -> dict:
         "sender_chat_id": int(sender_chat.id) if sender_chat else None,
         "sender_name": (getattr(user, "full_name", "") if user else "")[:255],
         "sender_username": (getattr(user, "username", "") or "")[:64] if user else "",
+        "metadata": {
+            "identity": {
+                "first_name": str(getattr(user, "first_name", "") or "")[:128],
+                "last_name": str(getattr(user, "last_name", "") or "")[:128],
+            }
+        } if user else {},
         "text": (getattr(message, "text", "") or "")[:4096],
         "caption": (getattr(message, "caption", "") or "")[:4096],
         "content_type": _content_type(message),
@@ -72,9 +78,17 @@ def archive_message(message) -> MessageSnapshot | None:
             if getattr(snapshot, field) != payload[field]:
                 setattr(snapshot, field, payload[field])
                 changed = True
+        updated = ["text", "caption", "edited_at"] if changed else []
+        meta = dict(snapshot.metadata or {})
+        identity = payload["metadata"].get("identity", {})
+        if identity and meta.get("identity") != identity:
+            meta["identity"] = identity
+            snapshot.metadata = meta
+            updated.append("metadata")
         if changed:
             snapshot.edited_at = timezone.now()
-            snapshot.save(update_fields=["text", "caption", "edited_at"])
+        if updated:
+            snapshot.save(update_fields=updated)
     return snapshot
 
 
