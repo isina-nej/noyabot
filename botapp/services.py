@@ -19,10 +19,9 @@ logger = logging.getLogger(__name__)
 _flood_events = defaultdict(deque)
 _duplicate_events = defaultdict(deque)
 
-# ponytail: 45s beats Telegram's ~60s "bot is not responding" feel and stops the
-# router's long provider-fallback chain from burning 2 minutes of user patience.
-# Raise via env if the upstream combo genuinely needs longer.
-NOYA_API_TIMEOUT = float(os.getenv("NOYA_API_TIMEOUT", "45"))
+# Up to five minutes, with the Telegram handler providing a separate 60s notice.
+# A global five-minute wall-clock bound protects multi-step agent requests.
+NOYA_API_TIMEOUT = 300.0
 
 
 _ZERO_WIDTH_RE = re.compile(r"[\u200b-\u200f\u202a-\u202e\ufeff\u2060\u00ad]")
@@ -434,7 +433,7 @@ async def _translate_prompt_for_image(prompt: str) -> str:
         return prompt
 
 
-async def generate_noya_image(prompt: str) -> bytes | None:
+async def generate_noya_image(prompt: str, *, translate: bool = True) -> bytes | None:
     """Generate image via 9Router /v1/images/generations endpoint."""
     api_key = os.getenv("NOYA_API_KEY", "").strip()
     if not api_key:
@@ -447,8 +446,9 @@ async def generate_noya_image(prompt: str) -> bytes | None:
     else:
         img_url = base_url.rstrip("/") + "/images/generations"
 
-    # Translate Persian prompt to English for much better image quality
-    en_prompt = await _translate_prompt_for_image(prompt)
+    # When the caller explicitly selected replied text as a prompt, pass it
+    # byte-for-byte without the translation model rewriting its instructions.
+    en_prompt = await _translate_prompt_for_image(prompt) if translate else prompt
 
     model = os.getenv("NOYA_IMAGE_MODEL", "ag/gemini-3.1-flash-image").strip()
     headers = {
@@ -467,7 +467,7 @@ async def generate_noya_image(prompt: str) -> bytes | None:
     }
     try:
         t0 = monotonic()
-        async with httpx.AsyncClient(timeout=60.0) as client:
+        async with httpx.AsyncClient(timeout=NOYA_API_TIMEOUT) as client:
             resp = await client.post(img_url, headers=headers, json=payload)
             resp.raise_for_status()
             logger.info("[NOYA-TIMING] 🖼️ Image generation took %.1fms", (monotonic() - t0) * 1000)
