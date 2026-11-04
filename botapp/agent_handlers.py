@@ -303,10 +303,18 @@ class ArchiveMiddleware(BaseMiddleware):
 
     async def __call__(self, handler, event, data):
         if isinstance(event, Message):
-            try:
-                await sync_to_async(activity.record_message_activity, thread_sensitive=True)(event)
-            except Exception:  # activity must never break message handling
-                logger.debug("activity counter failed", exc_info=True)
+            # Editing a Telegram message must update the archive if enabled,
+            # not increment counts as if another message had been posted.
+            update = data.get("event_update")
+            is_edited = bool(
+                getattr(update, "edited_message", None)
+                or getattr(update, "edited_channel_post", None)
+            )
+            if not is_edited:
+                try:
+                    await sync_to_async(activity.record_message_activity, thread_sensitive=True)(event)
+                except Exception:
+                    logger.debug("activity counter failed", exc_info=True)
             if message_archive.archive_enabled():
                 try:
                     await sync_to_async(message_archive.archive_message, thread_sensitive=True)(event)
