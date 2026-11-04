@@ -86,6 +86,7 @@ follow the license terms if distributing a modified build.
    BOT_INBOX_SEND_ENABLED=false
    BOT_INBOX_RETENTION_DAYS=30
    BOT_WEB_URL=https://botweb.example.org/
+   ALLOWED_HOSTS=inbox.example.org,localhost,127.0.0.1
    ```
 4. Restart **only after migrations and checks**:
    `sudo systemctl restart tinkera-robot`.
@@ -128,9 +129,11 @@ follow the license terms if distributing a modified build.
   staff inbox are archived as outgoing messages. Other media-generating paths
   may need separate outbound instrumentation.
 - The previous group-only `MessageSnapshot` is deliberately not auto-merged:
-  it has **no bot identity**. A manual, explicit migration could later
-  assign known historic group messages to a verified bot, but automatic
-  attribution between Noya/Maya would be unsafe.
+  it has **no bot identity**. Only if you have independently verified which
+  bot originally observed a specific group, use the DRY RUN command:
+  `manage.py import_legacy_group_inbox --bot-id BOT_ID --chat-id NEGATIVE_GROUP_ID`.
+  Once confident, add `--apply`. Never import arbitrary history into both
+  bots or infer private-message ownership.
 - Retain only what you need: set `BOT_INBOX_RETENTION_DAYS` and schedule
   `manage.py purge_bot_inbox` daily. Full message archival is an explicit
   privacy-impacting deployment choice.
