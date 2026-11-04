@@ -1530,12 +1530,12 @@ async def _dispatch_ai_action(
     content = m.group(2).strip()
 
     if action == "tts":
-        logger.info("[NOYA-AGENT] 🔊 AI chose TTS: %r", content[:60])
+        logger.info("[NOYA-AGENT] AI chose TTS text_chars=%d", len(content))
         await _handle_noya_tts(message, content)
         return True
 
     if action == "image":
-        logger.info("[NOYA-AGENT] 🖼️ AI chose image gen: %r", content[:60])
+        logger.info("[NOYA-AGENT] AI chose image gen prompt_chars=%d", len(content))
         await _handle_noya_image_generation(message, content)
         return True
 
@@ -1546,7 +1546,7 @@ async def _dispatch_ai_action(
                 None,
             )
             if reply_img:
-                logger.info("[NOYA-AGENT] ✏️ AI chose image edit: %r", content[:60])
+                logger.info("[NOYA-AGENT] AI chose image edit instruction_chars=%d", len(content))
                 await _handle_noya_image_edit(
                     message, content, reply_img["data"],
                     reply_img.get("mime", "image/jpeg"),
@@ -2004,7 +2004,7 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             # Get the first reply image for editing
             reply_img = next((i for i in images if i.get("source") in ("reply", "reply_parent")), None)
             if reply_img:
-                logger.info("[NOYA-TIMING] ✏️ Image edit detected: %r", ask[:60])
+                logger.info("[NOYA-TIMING] Image edit detected instruction_chars=%d", len(ask))
                 await _handle_noya_image_edit(message, ask, reply_img["data"], reply_img.get("mime", "image/jpeg"))
                 return
         # ── Jev media fast path (voice/image/none, fail-open) ──
