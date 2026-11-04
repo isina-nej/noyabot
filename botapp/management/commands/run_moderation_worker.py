@@ -52,7 +52,7 @@ async def execute_claimed(bots, action_id):
     )
 
 
-async def run_batch(limit):
+async def run_batch(limit, concurrency=1):
     await asyncio.to_thread(enqueue_daily_group_schedules)
     await asyncio.to_thread(requeue_stale_processing_actions)
     action_ids = await asyncio.to_thread(claim_due_actions, limit)
@@ -60,8 +60,32 @@ async def run_batch(limit):
         return 0
     bots = [Bot(token) for token in BOT_TOKENS]
     try:
-        for action_id in action_ids:
-            await execute_claimed(bots, action_id)
+        parallel = max(1, min(int(concurrency), 8))
+        if parallel == 1:
+            # Preserve the established order and side-effect behavior.
+            for action_id in action_ids:
+                await execute_claimed(bots, action_id)
+        else:
+            from asgiref.sync import sync_to_async
+
+            groups = await sync_to_async(
+                lambda: dict(ModerationAction.objects.filter(
+                    pk__in=action_ids,
+                ).values_list("pk", "group_id")),
+                thread_sensitive=True,
+            )()
+            group_locks = {}
+            slots = asyncio.Semaphore(parallel)
+
+            async def _one(action_id):
+                # Never overlap actions in the same group within a batch:
+                # lock/unlock or mute/unmute order matters.
+                lock = group_locks.setdefault(groups.get(action_id), asyncio.Lock())
+                async with lock:
+                    async with slots:
+                        await execute_claimed(bots, action_id)
+
+            await asyncio.gather(*(_one(action_id) for action_id in action_ids))
     finally:
         await asyncio.gather(*(bot.session.close() for bot in bots))
     return len(action_ids)
@@ -74,12 +98,16 @@ class Command(BaseCommand):
         parser.add_argument("--once", action="store_true")
         parser.add_argument("--interval", type=int, default=15)
         parser.add_argument("--limit", type=int, default=100)
+        parser.add_argument("--concurrency", type=int, default=1,
+                            help="Bounded per-batch parallelism; same-group actions remain serialized.")
 
     def handle(self, *args, **options):
         if not BOT_TOKENS:
             raise CommandError("BOT_TOKENS or BOT_TOKEN is not set.")
         while True:
-            processed = asyncio.run(run_batch(max(options["limit"], 1)))
+            processed = asyncio.run(run_batch(
+                max(options["limit"], 1), max(1, options["concurrency"]),
+            ))
             if options["once"]:
                 self.stdout.write(f"Processed {processed} actions.")
                 return
