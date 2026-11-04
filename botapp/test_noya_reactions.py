@@ -83,8 +83,9 @@ class AgentReactionPipelineTests(SimpleTestCase):
             request=httpx.Request("POST", "https://example.test/v1/chat/completions"),
             json=content,
         )
-        with patch("botapp.agent.loop.registry.chat_definitions", return_value=[]), (
-            patch("botapp.agent.loop.httpx.AsyncClient") as client
+        with (
+            patch("botapp.agent.loop.registry.chat_definitions", return_value=[]),
+            patch("botapp.agent.loop.httpx.AsyncClient") as client,
         ):
             client.return_value.__aenter__.return_value.post = AsyncMock(return_value=response)
             return async_to_sync(run_agent_loop)(
