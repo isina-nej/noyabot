@@ -47,3 +47,52 @@ class AttentionTests(SimpleTestCase):
         m.reply.assert_awaited_once_with("جانم، بگو ببینم چی شده؟")
         quota.assert_not_awaited()
         llm.assert_not_awaited()
+
+
+class SupersededTimeoutTests(SimpleTestCase):
+    def tearDown(self):
+        from botapp.noya_turns import reset_for_tests
+        reset_for_tests()
+
+    def test_only_newer_same_speaker_group_turn_suppresses_timeout(self):
+        from botapp.noya_turns import remember_turn, superseded_timeout
+        old = make_message("نویا نظرت چیه")
+        old.message_id = 10
+        new = make_message("نویا یه سؤال دیگه")
+        new.message_id = 15
+        remember_turn(old, 999)
+        self.assertFalse(superseded_timeout(old, 999))
+        remember_turn(new, 999)
+        self.assertTrue(superseded_timeout(old, 999))
+        self.assertFalse(superseded_timeout(old, 1000))
+        self.assertFalse(superseded_timeout(new, 999))
+        old.chat.type = "private"
+        self.assertFalse(superseded_timeout(old, 999))
+
+    def test_different_people_and_topics_do_not_supersede_each_other(self):
+        from botapp.noya_turns import remember_turn, superseded_timeout
+        first = make_message("نویا سوال یک")
+        first.message_id = 10
+        next_person = make_message("نویا سلام")
+        next_person.message_id = 20
+        next_person.from_user.id = 88
+        remember_turn(first, 999)
+        remember_turn(next_person, 999)
+        self.assertFalse(superseded_timeout(first, 999))
+        other_thread = make_message("نویا سلام")
+        other_thread.message_id = 30
+        other_thread.message_thread_id = 6
+        remember_turn(other_thread, 999)
+        self.assertFalse(superseded_timeout(first, 999))
+
+    def test_opt_out(self):
+        import os
+        from botapp.noya_turns import remember_turn, superseded_timeout
+        old = make_message("نویا سوال یک")
+        old.message_id = 10
+        latest = make_message("نویا سوال دو")
+        latest.message_id = 20
+        remember_turn(old, 999)
+        remember_turn(latest, 999)
+        with patch.dict(os.environ, {"NOYA_SUPPRESS_SUPERSEDED_TIMEOUTS": "false"}):
+            self.assertFalse(superseded_timeout(old, 999))
