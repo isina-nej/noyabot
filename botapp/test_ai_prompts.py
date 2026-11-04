@@ -38,7 +38,7 @@ class NoyaSystemPromptTest(TestCase):
         self.assertIn(question, messages[1]["content"])
 
     def test_noya_system_prompt_is_valid(self):
-        self.assertEqual(NOYA_SYSTEM_PROMPT_VERSION, "v8")
+        self.assertEqual(NOYA_SYSTEM_PROMPT_VERSION, "v9")
         prompt = get_noya_system_prompt()
         self.assertTrue(bool(prompt))
         self.assertIn("نویا", prompt)
