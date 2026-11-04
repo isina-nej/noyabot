@@ -105,17 +105,30 @@ def inbox_chats(request):
     try:
         bot_id = _int_field(request.GET.get("bot_id"), "bot_id")
         limit = min(100, max(1, int(request.GET.get("limit", 80))))
+        offset = int(request.GET.get("offset", 0))
+        if not 0 <= offset <= 100000:
+            raise ValueError("invalid offset")
+        query = str(request.GET.get("q", ""))[:80].strip()
     except (TypeError, ValueError):
         return JsonResponse({"error": "invalid request"}, status=400)
 
     # Group by chat, not by message; a high-volume supergroup must not hide
     # low-volume private messages just because it generated many updates.
+    candidates = BotInboxMessage.objects.filter(bot_id=bot_id)
+    if query:
+        from django.db.models import Q
+        candidates = candidates.filter(
+            Q(chat_title__icontains=query) |
+            Q(sender_name__icontains=query) |
+            Q(sender_username__icontains=query)
+        )
     groups = list(
-        BotInboxMessage.objects.filter(bot_id=bot_id)
-        .values("chat_id")
+        candidates.values("chat_id")
         .annotate(last=Max(Coalesce("message_date", "archived_at")))
-        .order_by("-last")[:limit]
+        .order_by("-last")[offset:offset + limit + 1]
     )
+    has_more = len(groups) > limit
+    groups = groups[:limit]
     chats = []
     for group in groups:
         row = (BotInboxMessage.objects.filter(
@@ -137,7 +150,10 @@ def inbox_chats(request):
             "last": (row.message_date or row.archived_at).isoformat(),
             "last_sender": row.sender_name,
         })
-    return JsonResponse({"chats": chats})
+    return JsonResponse({
+        "chats": chats,
+        "next_offset": offset + limit if has_more else None,
+    })
 
 
 @never_cache
