@@ -154,14 +154,20 @@ class JsonStdlibFormatter(logging.Formatter):
 
     def format(self, record: logging.LogRecord) -> str:
         payload = _base_fields()
-        payload["event"] = record.getMessage().split(" ", 1)[0][:80]
+        # Standard logging is not a safe place for user prompts or tool
+        # arguments. Structured event payloads pass through field redaction;
+        # unstructured messages are deliberately omitted in production logs.
+        from .redaction import redact_value
+        payload["event"] = "stdlib.log"
         try:
             maybe = json.loads(record.getMessage())
             if isinstance(maybe, dict):
-                payload.update({k: v for k, v in maybe.items() if k != "event"})
-                payload["event"] = str(maybe.get("event") or payload["event"])
-        except Exception:
-            payload["message"] = record.getMessage()[:500]
+                clean = redact_value({k: v for k, v in maybe.items() if k != "event"})
+                clean.pop("message", None)
+                payload.update(clean)
+                payload["event"] = str(maybe.get("event") or payload["event"])[:80]
+        except (TypeError, ValueError):
+            payload["message"] = "[REDACTED]"
         payload["level"] = record.levelname.casefold()
         payload["logger"] = record.name
         return json.dumps(payload, default=str, ensure_ascii=False)
