@@ -198,3 +198,29 @@ class SSRFTransportTests(SimpleTestCase):
         with patch("botapp.web.security.socket.getaddrinfo", return_value=answers):
             with self.assertRaises(BlockedURLError):
                 async_to_sync(SafeNetworkBackend().connect_tcp)("example.org", 443)
+
+
+class ProductionConfigurationTests(SimpleTestCase):
+    @patch.dict(os.environ, {"NOYA_ENVIRONMENT": "production", "DEBUG": "true"})
+    def test_production_rejects_debug(self):
+        import subprocess
+        import sys
+
+        proc = subprocess.run(
+            [sys.executable, "-c", "import config.settings"],
+            capture_output=True, text=True, timeout=10,
+            env={**os.environ, "NOYA_ENVIRONMENT": "production", "DEBUG": "true"},
+        )
+        self.assertNotEqual(proc.returncode, 0)
+        self.assertIn("DEBUG must be false", proc.stderr)
+
+    def test_sync_harness_execution_denied_in_production(self):
+        from botapp.harness.executor import HarnessExecutor
+        from botapp.harness.errors import StepTimeoutError
+
+        with patch.dict(os.environ, {
+            "NOYA_ENVIRONMENT": "production",
+            "NOYA_ALLOW_SYNC_HARNESS": "false",
+        }):
+            with self.assertRaises(StepTimeoutError):
+                HarnessExecutor._exec_sync(None, None, None)
