@@ -322,12 +322,14 @@ async def run_ai_with_memory(
     # Match provider kwargs up front. Never retry an AI request merely because
     # provider internals raised TypeError after performing a billable action.
     from botapp.noya_social_roles import trusted_social_context
+    from botapp.noya_reactions import reaction_eligible
     social_context = trusted_social_context(message)
     kwargs = {
         "speaker_user_id": speaker_user_id,
         "speaker_name": speaker_name,
         "images": images,
         "social_context": social_context,
+        "reaction_allowed": reaction_eligible(message),
     }
     try:
         signature = inspect.signature(provider)
