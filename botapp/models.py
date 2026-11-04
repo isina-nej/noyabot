@@ -1010,6 +1010,7 @@ class MessageSnapshot(models.Model):
         indexes = [
             models.Index(fields=["chat_id", "-archived_at"]),
             models.Index(fields=["chat_id", "deleted_by_bot_at"]),
+            models.Index(fields=["chat_id", "thread_id", "-message_id"], name="noya_context_scan_idx"),
         ]
         ordering = ["-archived_at"]
 
