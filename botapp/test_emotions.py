@@ -136,6 +136,35 @@ class EmotionalStateEngineTests(SimpleTestCase):
         self.assertEqual(again.relationship_status, "reconciled")
         self.assertEqual(again.hurt_score, 0)
 
+    def test_decay_counts_elapsed_time_once_not_since_original_event(self):
+        at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        initial = apply_event(
+            EmotionalState(),
+            EmotionalEvent("serious_disrespect", event_id="initial", severity=80, timestamp=at),
+        )
+        after_ten = decay_state(initial, now=at + timedelta(days=10))
+        self.assertEqual(after_ten.hurt_score, 70)
+        # Reading exactly the same persisted state twice must not subtract
+        # another ten days of decay.
+        same_instant = decay_state(after_ten, now=at + timedelta(days=10))
+        self.assertEqual(same_instant.hurt_score, 70)
+        after_one_more = decay_state(same_instant, now=at + timedelta(days=11))
+        self.assertEqual(after_one_more.hurt_score, 69)
+        self.assertEqual(after_one_more.relationship_status, "hurt")
+
+    def test_affection_increases_warmth_and_trust_without_fake_reconciliation(self):
+        baseline = EmotionalState()
+        affectionate = apply_event(baseline, "affection", event_id="affection-one")
+        self.assertGreater(affectionate.warmth, baseline.warmth)
+        self.assertGreater(affectionate.trust_context, baseline.trust_context)
+        again = apply_event(affectionate, "affection", event_id="affection-one")
+        self.assertEqual(again, affectionate)
+        self.assertEqual(affectionate.relationship_status, "neutral")
+        hurt = apply_event(affectionate, "serious_disrespect", event_id="hurt")
+        heart = apply_event(hurt, "affection", event_id="affection-two")
+        self.assertEqual(heart.remaining_hurt, hurt.remaining_hurt)
+        self.assertEqual(heart.relationship_status, "hurt")
+
     def test_decay_never_raises_hurt(self):
         at = datetime(2026, 1, 1, tzinfo=timezone.utc)
         state = apply_event(EmotionalState(), EmotionalEvent("serious_disrespect", event_id="h", severity=50, timestamp=at))
