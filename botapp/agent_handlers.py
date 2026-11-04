@@ -320,6 +320,19 @@ class ArchiveMiddleware(BaseMiddleware):
                     await sync_to_async(message_archive.archive_message, thread_sensitive=True)(event)
                 except Exception:  # archival must never break message handling
                     logger.debug("message archival failed", exc_info=True)
+            # Separate per-bot private/group inbox: the legacy MessageSnapshot
+            # does not carry bot_id and cannot safely serve a multi-bot UI.
+            from botapp import bot_inbox
+            if bot_inbox.enabled():
+                try:
+                    bot = data.get("bot")
+                    bot_id = int(getattr(bot, "id", 0) or 0)
+                    if bot_id:
+                        await sync_to_async(
+                            bot_inbox.archive_message, thread_sensitive=True,
+                        )(event, bot_id)
+                except Exception:
+                    logger.warning("bot inbox archive failed", exc_info=True)
         # Run handlers first so Noya's "recent chat" buffer excludes the current ask.
         result = await handler(event, data)
         if isinstance(event, Message):
