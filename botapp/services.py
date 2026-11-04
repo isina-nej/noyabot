@@ -429,7 +429,7 @@ async def _translate_prompt_for_image(prompt: str) -> str:
                 from botapp.agent.loop import _parse_sse_stream
                 data = _parse_sse_stream(resp.text) or {}
             en = data.get("choices", [{}])[0].get("message", {}).get("content", "").strip()
-            logger.info("[NOYA-TIMING] 🔤 Prompt translation %.1fms: %r → %r", (monotonic() - t0) * 1000, prompt, en[:100])
+            logger.info("[NOYA-TIMING] Prompt translation %.1fms input_chars=%d output_chars=%d", (monotonic() - t0) * 1000, len(prompt), len(en))
             return en if en else prompt
     except Exception:
         logger.warning("Prompt translation failed, using original Persian", exc_info=True)
@@ -484,7 +484,7 @@ async def generate_noya_image(prompt: str, *, translate: bool = True) -> bytes |
                 r.raise_for_status()
                 return r.content
     except Exception:
-        logger.exception("Noya image generation failed prompt=%s", en_prompt[:80])
+        logger.exception("Noya image generation failed")
     return None
 
 
@@ -577,7 +577,7 @@ async def edit_noya_image(instruction: str, image_data: bytes, image_mime: str =
 
             choices = data.get("choices") or []
             if not choices:
-                logger.warning("Image edit returned no choices: %s", resp.text[:200])
+                logger.warning("Image edit returned no choices response_bytes=%d", len(resp.content))
                 return None
             msg = choices[0].get("message", {})
             content = msg.get("content", "")
@@ -586,10 +586,10 @@ async def edit_noya_image(instruction: str, image_data: bytes, image_mime: str =
             if img_bytes:
                 return img_bytes
 
-            logger.warning("Image edit: model returned unparseable content: %s", str(content)[:200])
+            logger.warning("Image edit: unparseable response_chars=%d", len(str(content)))
             return None
     except Exception:
-        logger.exception("Noya image edit failed instruction=%s", en_instruction[:80])
+        logger.exception("Noya image edit failed")
     return None
 
 
@@ -756,7 +756,7 @@ async def generate_noya_tts(text: str, *, as_noya: bool = True) -> bytes | None:
                     return base64.b64decode(audio_b64)
             except Exception:
                 pass
-            logger.warning("TTS unexpected content-type=%s body=%s", content_type, resp.text[:200])
+            logger.warning("TTS unexpected content-type=%s response_bytes=%d", content_type, len(resp.content))
             return None
     except httpx.TimeoutException:
         logger.warning("[NOYA-TIMING] ⚠️ TTS timed out")
@@ -780,10 +780,10 @@ async def fetch_url_content(url: str, *, max_chars: int = 8000) -> str:
         doc = await default_web_service.fetch_page(url)
         elapsed = (monotonic() - t0) * 1000
         text = doc.text
-        logger.info("[NOYA-TIMING] 🌐 Fetched %s in %.1fms (chars=%d)", url[:60], elapsed, len(text))
+        logger.info("[NOYA-TIMING] Fetched host=%s in %.1fms (chars=%d)", urlsplit(url).hostname or "-", elapsed, len(text))
         if len(text) > max_chars:
             text = text[:max_chars] + "\n…[ادامه محتوا کوتاه شد]"
         return text if text else "[صفحه خالی بود]"
     except Exception as exc:
-        logger.warning("Fetch URL failed: %s error=%s", url[:60], exc)
+        logger.warning("Fetch URL failed host=%s error_type=%s", urlsplit(url).hostname or "-", type(exc).__name__)
         return f"[خطا در باز کردن لینک: {exc}]"
