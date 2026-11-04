@@ -9,6 +9,14 @@ class TelegramUser(models.Model):
     started = models.BooleanField(default=False)
     blocked = models.BooleanField(default=False)
     last_live_check_at = models.DateTimeField(null=True, blank=True)
+    # Explicit self-service opt-in only. No automatic group-member scraping.
+    profile_opt_in = models.BooleanField(default=False)
+    profile_first_name = models.CharField(max_length=128, blank=True, default="")
+    profile_username = models.CharField(max_length=64, blank=True, default="")
+    profile_bio = models.TextField(blank=True, default="")
+    profile_birthdate = models.CharField(max_length=10, blank=True, default="")
+    profile_photo_file_id = models.CharField(max_length=256, blank=True, default="")
+    profile_updated_at = models.DateTimeField(null=True, blank=True)
 
     def __str__(self):
         return str(self.telegram_user_id)
