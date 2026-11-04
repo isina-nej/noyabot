@@ -329,6 +329,7 @@ async def run_ai_with_memory(
     # provider internals raised TypeError after performing a billable action.
     from botapp.noya_social_roles import trusted_social_context
     from botapp.noya_reactions import reaction_eligible
+    from botapp.noya_silence import silence_eligible
     social_context = trusted_social_context(message)
     kwargs = {
         "speaker_user_id": speaker_user_id,
@@ -336,6 +337,7 @@ async def run_ai_with_memory(
         "images": images,
         "social_context": social_context,
         "reaction_allowed": reaction_eligible(message),
+        "silence_allowed": silence_eligible(message),
     }
     try:
         signature = inspect.signature(provider)
