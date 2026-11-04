@@ -248,8 +248,9 @@ async def call_noya_api(
     """Hermes-style: call agent loop with tools, fall back to direct API."""
     t0 = monotonic()
     logger.info(
-        "[NOYA-TIMING] ▶ START call_noya_api session=%s speaker_id=%s question=%r agent=%s",
-        session_id, speaker_user_id, (question or "")[:60], use_agent,
+        "[NOYA-TIMING] START call_noya_api session_scope=%s text_length=%d agent=%s",
+        "telegram" if session_id.startswith("telegram:") else "other",
+        len(question or ""), use_agent,
     )
     # ── Precedence: Search / URL intent overrides clock short-circuit ──
     from botapp.web import resolve_search_intent, SearchDecision
