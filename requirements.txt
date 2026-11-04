@@ -14,3 +14,5 @@ pypdf>=5,<7
 python-docx>=1.1,<2
 # Renders Telegram Lottie (.tgs) stickers as vision frames in an isolated worker.
 rlottie-python==1.1.6
+# Validate LLM-generated chat tool arguments against JSON Schemas.
+jsonschema==4.25.1
