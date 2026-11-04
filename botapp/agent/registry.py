@@ -193,12 +193,38 @@ class ToolRegistry:
             return f"Error: tool '{name}' is not available in this context"
         return tool
 
+    @staticmethod
+    def _validated_chat_args(tool: Tool, args: dict) -> dict:
+        """Validate provider JSON before invoking ANY chat tool handler.
+
+        The advertised JSON schema is not a security boundary by itself:
+        we also bound the raw argument size and reject malformed structures.
+        Admin tools have their separate Pydantic validation and permission gate.
+        """
+        import json
+        from jsonschema import Draft202012Validator
+        from jsonschema.exceptions import ValidationError, SchemaError
+
+        if not isinstance(args, dict):
+            raise InvalidToolInput()
+        try:
+            encoded = json.dumps(args, ensure_ascii=False)
+            if len(encoded.encode("utf-8")) > 16384:
+                raise InvalidToolInput()
+            schema = tool.schema_dict()
+            Draft202012Validator.check_schema(schema)
+            Draft202012Validator(schema).validate(args)
+        except (TypeError, ValueError, OverflowError, ValidationError, SchemaError) as exc:
+            raise InvalidToolInput() from exc
+        return args
+
     def dispatch(self, name: str, args: dict) -> str | Any:
         """Sync dispatch — chat-loop path only. Returns str, never raises."""
         tool = self._checked_chat_tool(name)
         if isinstance(tool, str):
             return tool
         try:
+            args = self._validated_chat_args(tool, args)
             import inspect
             sig = inspect.signature(tool.handler)
             if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
@@ -210,9 +236,11 @@ class ToolRegistry:
             if hasattr(result, "__await__"):
                 raise RuntimeError(f"Tool {name} is async — use dispatch_async()")
             return str(result) if result is not None else "(no result)"
-        except Exception as e:
-            logger.exception(f"Tool {name} error")
-            return f"Error executing {name}: {type(e).__name__}: {e}"
+        except InvalidToolInput:
+            return f"Error: invalid input for tool {name}"
+        except Exception:
+            logger.exception("Chat tool failure: %s", name)
+            return f"Error executing {name}: tool failed"
 
     async def dispatch_async(self, name: str, args: dict) -> str:
         """Async dispatch — chat-loop path only. Returns str, never raises."""
@@ -220,6 +248,7 @@ class ToolRegistry:
         if isinstance(tool, str):
             return tool
         try:
+            args = self._validated_chat_args(tool, args)
             import inspect
             sig = inspect.signature(tool.handler)
             if any(p.kind == inspect.Parameter.VAR_KEYWORD for p in sig.parameters.values()):
@@ -231,9 +260,11 @@ class ToolRegistry:
             if inspect.isawaitable(result):
                 result = await result
             return str(result) if result is not None else "(no result)"
-        except Exception as e:
-            logger.exception(f"Tool {name} error")
-            return f"Error executing {name}: {type(e).__name__}: {e}"
+        except InvalidToolInput:
+            return f"Error: invalid input for tool {name}"
+        except Exception:
+            logger.exception("Chat tool failure: %s", name)
+            return f"Error executing {name}: tool failed"
 
 
 # Global singleton
