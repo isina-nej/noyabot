@@ -203,7 +203,7 @@ async def run_agent_loop(
                 if img.get("animation_preview_only"):
                     user_content.append({
                         "type": "text",
-                        "text": "فقط یک نمای ثابت از انیمیشن در دسترس است؛ درباره حرکت دیده‌نشده حدس نزن.",
+                        "text": "این فقط یک نمای ثابت است. اگر صرفاً استیکر فرستاده شده، واکنش کوتاه و مرتبط با حال‌وهوای همین نما بده؛ بدون درخواست صریح، درباره فریم یا فرمت توضیح نده و حرکت دیده‌نشده را حدس نزن.",
                     })
                 if img.get("frame_index"):
                     user_content.append({
