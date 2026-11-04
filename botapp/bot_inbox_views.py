@@ -13,6 +13,7 @@ import os
 from asgiref.sync import async_to_sync
 from django.conf import settings
 from django.db.models import Count, Max
+from django.db.models.functions import Coalesce
 from django.http import JsonResponse
 from django.shortcuts import render
 from django.views.decorators.cache import never_cache
@@ -112,21 +113,21 @@ def inbox_chats(request):
     groups = list(
         BotInboxMessage.objects.filter(bot_id=bot_id)
         .values("chat_id")
-        .annotate(last=Max("archived_at"))
+        .annotate(last=Max(Coalesce("message_date", "archived_at")))
         .order_by("-last")[:limit]
     )
     chats = []
     for group in groups:
         row = (BotInboxMessage.objects.filter(
             bot_id=bot_id, chat_id=group["chat_id"],
-        ).order_by("-archived_at", "-id").first())
+        ).order_by("-message_date", "-message_id", "-id").first())
         if row is None:
             continue
         title = row.chat_title
         if row.chat_type == "private":
             first = BotInboxMessage.objects.filter(
                 bot_id=bot_id, chat_id=row.chat_id, is_outgoing=False,
-            ).order_by("-archived_at").first()
+            ).order_by("-message_date", "-message_id").first()
             title = (first.chat_title or first.sender_name) if first else title
         chats.append({
             "id": str(row.chat_id),
