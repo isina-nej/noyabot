@@ -1467,6 +1467,28 @@ async def _noya_delayed_notice(message: Message) -> None:
         logger.warning("Noya waiting notice failed: %s", type(exc).__name__)
 
 
+@router.message(Command("profile_save"))
+async def profile_save_command(message: Message):
+    """Explicitly opt-in to self profile storage in private chat."""
+    from botapp.noya_profile import save_my_profile
+    if not await save_my_profile(message):
+        await message.reply("برای ذخیره اطلاعات خودت این دستور رو در پیوی ربات بفرست.")
+
+
+@router.message(Command("profile_forget"))
+async def profile_forget_command(message: Message):
+    from botapp.noya_profile import forget_my_profile
+    if not await forget_my_profile(message):
+        await message.reply("این دستور فقط در پیوی خودت کار می‌کنه.")
+
+
+@router.message(Command("profile_me"))
+async def profile_me_command(message: Message):
+    from botapp.noya_profile import my_profile_summary
+    if not await my_profile_summary(message):
+        await message.reply("برای دیدن اطلاعات خودت وارد پیوی ربات شو.")
+
+
 @router.message(Command("voice", "ویس", "صدا", "tts"))
 async def voice_command(message: Message, command: CommandObject):
     text = action_reason(command)
@@ -1912,6 +1934,16 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     )
     if images and not ask:
         ask = "این تصویر / استیکر را ببین و پاسخ بده."
+    from botapp.noya_profile import requests_my_profile_image, my_profile_image
+    if requests_my_profile_image(ask):
+        profile_frame = await my_profile_image(message)
+        if profile_frame is None:
+            await message.reply(
+                "برای دیدن عکس پروفایلت، اول در پیوی خودت /profile_save رو بفرست. "
+                "اگر عکس در دسترس تلگرام نباشه هم نمی‌تونم ببینمش."
+            )
+            return
+        images = [profile_frame, *images][:3]
     # Attach reply-chain + recent group chatter so Noya can read the chat/tag target.
     payload = build_noya_user_payload(message, ask, bot_username=bot_username)
     if media.context:
