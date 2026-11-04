@@ -312,6 +312,12 @@ async def run_ai_with_memory(
                 enriched = f"{previous}\n\n{enriched}"
         except Exception as exc:
             logger.warning("Dialogue history unavailable: %s", type(exc).__name__)
+    # Only the consenting owner in their own private conversation can supply
+    # profile facts to the LLM. Never leak opt-in metadata into group context.
+    from botapp.noya_profile import opted_in_profile_context
+    self_profile = await opted_in_profile_context(message)
+    if self_profile:
+        enriched = enriched + "\n\n" + self_profile
     relationship = await _relationship_context_for_message(message)
     if relationship:
         enriched = (
