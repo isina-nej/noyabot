@@ -315,6 +315,10 @@ async def run_agent_loop(
                 # SSE stream format: "data: {json}\n\ndata: {json}\n\n..."
                 data = _parse_sse_stream(text)
                 if not data:
+                    ai_provider_request_end(
+                        duration_ms=(time.perf_counter() - request_started) * 1000,
+                        status="malformed", model=tool_model, http_status=resp.status_code,
+                    )
                     ai_sse_malformed(api_url)
                     logger.error("[NOYA-AGENT] Unparseable provider response status=%s bytes=%d", resp.status_code, len(text))
                     return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
