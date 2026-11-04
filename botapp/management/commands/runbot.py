@@ -1919,6 +1919,11 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             )
             return
 
+    # Register this speaker's addressed message to distinguish old timeout
+    # notifications from a newer discussion; successful replies are preserved.
+    from botapp.noya_turns import remember_turn
+    remember_turn(message, int(self_bot_id or 0))
+
     # A bare call of Noya's name is just a request for attention, not a
     # request to explain another person's question or private life.
     from botapp.noya_attention import quick_attention_reply
@@ -2060,6 +2065,11 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             ),
         )
     except asyncio.TimeoutError:
+        from botapp.noya_turns import superseded_timeout
+        if superseded_timeout(message, int(self_bot_id or 0)):
+            # The same person continued the group conversation; don't send
+            # a five-minute-old error after their later Noya-directed turn.
+            return
         answer, agent_metadata = (
             "جوابم بیشتر از پنج دقیقه طول کشید و درخواست متوقف شد. یک بار دیگه امتحان کنیم؟", {}
         )
