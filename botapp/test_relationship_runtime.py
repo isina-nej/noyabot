@@ -130,6 +130,37 @@ class RelationshipRuntimeTests(TestCase):
         self.assertEqual(captured[1]["relationship_status"], "neutral")
         self.assertIn("قبلاً مهربانی نشان داده", captured[1]["tone_directive"])
 
+    def test_fractional_decay_survives_repeated_database_reloads(self):
+        from datetime import timedelta
+
+        async def provider(question, session_id, **kwargs):
+            return "پاسخ"
+
+        async_to_sync(run_ai_with_memory)(
+            _message(chat_id=-707, message_id=1, text="خفه شو"),
+            "سؤال", provider, "telegram:-707",
+        )
+        conversation = MemoryConversation.objects.get(conversation_id="telegram:-707:0")
+        row = NoyaRelationshipState.objects.get(
+            user__telegram_user_id=42, conversation=conversation,
+        )
+        start = row.last_interaction_at
+        initial_hurt = row.hurt_score
+
+        get_relationship_state(42, conversation, now=start + timedelta(hours=3))
+        row.refresh_from_db()
+        self.assertEqual(row.hurt_score, initial_hurt)
+        self.assertAlmostEqual(row.decay_fraction, 0.5, places=3)
+
+        get_relationship_state(42, conversation, now=start + timedelta(hours=6))
+        row.refresh_from_db()
+        self.assertEqual(row.hurt_score, initial_hurt - 1)
+        self.assertAlmostEqual(row.decay_fraction, 0, places=3)
+
+        get_relationship_state(42, conversation, now=start + timedelta(hours=6))
+        row.refresh_from_db()
+        self.assertEqual(row.hurt_score, initial_hurt - 1)
+
     def test_model_quality_criticism_does_not_start_a_conflict(self):
         captured = []
 
