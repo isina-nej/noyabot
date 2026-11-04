@@ -1301,6 +1301,16 @@ def _is_image_edit_request(text: str, has_reply_image: bool) -> bool:
     return any(kw in t for kw in _IMAGE_EDIT_KEYWORDS)
 
 
+async def _await_noya_operation(message: Message, operation):
+    """Five-minute wall-clock cap plus one 60-second Telegram notice."""
+    notice = asyncio.create_task(_noya_delayed_notice(message))
+    try:
+        return await asyncio.wait_for(operation, timeout=300)
+    finally:
+        notice.cancel()
+        await asyncio.gather(notice, return_exceptions=True)
+
+
 async def _handle_noya_image_generation(message: Message, prompt_text: str, *, direct_prompt: bool = False):
     prompt_clean = (prompt_text or "").strip()
     if not prompt_clean:
@@ -1308,46 +1318,47 @@ async def _handle_noya_image_generation(message: Message, prompt_text: str, *, d
         return
     if message.bot:
         await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
-    progress = await message.reply("در حال کشیدن نقاشی برات… 🎨")
-    image_bytes = (await generate_noya_image(prompt_clean, translate=False)
-                   if direct_prompt else await generate_noya_image(prompt_clean))
+    try:
+        operation = (generate_noya_image(prompt_clean, translate=False)
+                     if direct_prompt else generate_noya_image(prompt_clean))
+        image_bytes = await _await_noya_operation(message, operation)
+    except asyncio.TimeoutError:
+        await message.reply("پنج دقیقه گذشت و ساخت تصویر کامل نشد؛ دوباره امتحان کنیم؟")
+        return
     if not image_bytes:
-        await progress.edit_text("متأسفانه نتونستم این عکس رو بسازم. لطفاً دوباره با یه توصیف دیگه امتحان کن.")
+        await message.reply("متأسفانه نتونستم این عکس رو بسازم. لطفاً دوباره با یه توصیف دیگه امتحان کن.")
         return
     try:
         photo = BufferedInputFile(image_bytes, filename="noya.png")
         caption = f"اینم نقاشیت! 🎨\n<blockquote>{escape(prompt_clean[:120])}</blockquote>"
         await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
-        try:
-            await progress.delete()
-        except Exception:
-            pass
-    except Exception:
+    except TelegramAPIError:
         logger.exception("Failed sending generated photo to chat=%s", message.chat.id)
-        await progress.edit_text("عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
+        await message.reply("عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
 
 
 async def _handle_noya_image_edit(message: Message, instruction: str, image_data: bytes, image_mime: str = "image/jpeg"):
-    """Handle image edit: user replies to an image with edit instructions."""
+    """Edit image with a bounded wait and optional one-minute notice."""
     if message.bot:
         await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
-    progress = await message.reply("در حال ویرایش عکس… ✏️")
-    edited_bytes = await edit_noya_image(instruction, image_data, image_mime)
+    try:
+        edited_bytes = await _await_noya_operation(
+            message, edit_noya_image(instruction, image_data, image_mime),
+        )
+    except asyncio.TimeoutError:
+        await message.reply("پنج دقیقه گذشت و ویرایش عکس کامل نشد.")
+        return
     if not edited_bytes:
-        await progress.edit_text("متأسفانه نتونستم عکس رو ویرایش کنم. لطفاً دوباره امتحان کن.")
+        await message.reply("متأسفانه نتونستم عکس رو ویرایش کنم. لطفاً دوباره امتحان کن.")
         return
     try:
         ext = "jpg" if edited_bytes.startswith(b"\xff\xd8") else "png"
         photo = BufferedInputFile(edited_bytes, filename=f"noya_edit.{ext}")
         caption = f"بفرما! ✏️\n<blockquote>{escape(instruction[:120])}</blockquote>"
         await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
-        try:
-            await progress.delete()
-        except Exception:
-            pass
-    except Exception:
+    except TelegramAPIError:
         logger.exception("Failed sending edited photo to chat=%s", message.chat.id)
-        await progress.edit_text("عکس ویرایش شد ولی در ارسال خطا پیش اومد.")
+        await message.reply("عکس ویرایش شد ولی در ارسال خطا پیش اومد.")
 
 
 @router.message(Command("draw", "image", "pic", "عکس"))
@@ -1384,87 +1395,30 @@ def extract_voice_text(text: str) -> str | None:
 
 
 async def _handle_noya_tts(message: Message, text: str, *, as_noya: bool = True) -> None:
-    """Generate TTS and send as voice message."""
+    """Generate voice and optionally notify once if it takes over a minute."""
     text_clean = (text or "").strip()
     if not text_clean:
         await message.reply("لطفاً متنی رو که می‌خوای با صدا بگم بنویس.")
         return
     if message.bot:
         await message.bot.send_chat_action(chat_id=message.chat.id, action="record_voice")
-    progress = await message.reply("دارم ضبط می‌کنم… 🎙️")
-    audio_bytes = await generate_noya_tts(text_clean, as_noya=as_noya)
+    try:
+        audio_bytes = await _await_noya_operation(
+            message, generate_noya_tts(text_clean, as_noya=as_noya),
+        )
+    except asyncio.TimeoutError:
+        await message.reply("پنج دقیقه گذشت و ساخت ویس کامل نشد.")
+        return
     if not audio_bytes:
-        await progress.edit_text("متأسفانه نتونستم ویس بسازم. لطفاً دوباره امتحان کن.")
+        await message.reply("متأسفانه نتونستم ویس بسازم. لطفاً دوباره امتحان کن.")
         return
     try:
         voice_file = BufferedInputFile(audio_bytes, filename="noya_voice.mp3")
         caption = f"🎙️ <blockquote>{escape(text_clean[:120])}</blockquote>"
         await message.reply_voice(voice=voice_file, caption=caption, parse_mode="HTML")
-        try:
-            await progress.delete()
-        except Exception:
-            pass
-    except Exception:
+    except TelegramAPIError:
         logger.exception("Failed sending TTS voice to chat=%s", message.chat.id)
-        await progress.edit_text("ویس ساخته شد ولی در ارسال خطایی پیش اومد.")
-
-
-async def _handle_reply_media_intent(message: Message, ask: str, media) -> bool:
-    """Execute short reply commands without asking a model to rewrite the source."""
-    from botapp.noya_reply_media import classify_reply_command, selected_reply_text
-    from botapp.noya_sticker import image_to_webp_sticker
-
-    action = classify_reply_command(
-        ask, has_reply=bool(getattr(message, "reply_to_message", None)),
-    )
-    if action is None:
-        return False
-    quoted = selected_reply_text(message)
-    if action == "image":
-        if not quoted:
-            await message.reply("روی یک پیام متنی ریپلای کن تا همون متن رو مستقیم به عکس‌ساز بفرستم.")
-            return True
-        await _handle_noya_image_generation(message, quoted, direct_prompt=True)
-        return True
-    if action == "voice":
-        if not quoted:
-            await message.reply("روی پیام متنی ریپلای کن تا متن خودش رو ویس کنم.")
-            return True
-        await _handle_noya_tts(message, quoted)
-        return True
-    if action == "text":
-        if media.transcript:
-            await _reply_noya_transcript(message, media.transcript, media.warnings)
-        elif quoted:
-            for offset in range(0, len(quoted), 3900):
-                await message.reply(quoted[offset:offset + 3900])
-        else:
-            await message.reply("روی ویس یا پیام متنی ریپلای کن تا متنش رو بفرستم.")
-        return True
-    if action == "sticker":
-        reply_img = next(
-            (i for i in media.images if i.get("source") == "reply"), None,
-        )
-        if not reply_img:
-            await message.reply("روی عکس یا تصویر ریپلای کن تا به استیکر تبدیلش کنم.")
-            return True
-        try:
-            sticker_data = await asyncio.to_thread(image_to_webp_sticker, reply_img["data"])
-            await message.reply_sticker(BufferedInputFile(sticker_data, filename="noya.webp"))
-        except (ValueError, TelegramAPIError) as exc:
-            logger.warning("Noya sticker conversion failed: %s", type(exc).__name__)
-            await message.reply("ساخت یا ارسال استیکر ممکن نشد؛ یک عکس معمولی بفرست.")
-        return True
-    return False
-
-
-async def _noya_delayed_notice(message: Message) -> None:
-    """Only notify after 60s; a cancelled task must never post a message."""
-    await asyncio.sleep(60)
-    try:
-        await message.reply("یک لحظه صبر کن عزیزم")
-    except TelegramAPIError as exc:
-        logger.warning("Noya waiting notice failed: %s", type(exc).__name__)
+        await message.reply("ویس ساخته شد ولی در ارسال خطایی پیش اومد.")
 
 
 @router.message(Command("profile_save"))
@@ -2022,11 +1976,11 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         except Exception:
             logger.info("jev_media_fail_open chat=%s", message.chat.id)
     await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
-    # Whole-turn wall-clock deadline, including tools, memory and provider
-    # fallbacks. A separate notifier does not cancel or restart the AI call.
-    waiting_notice = asyncio.create_task(_noya_delayed_notice(message))
+    # The same five-minute boundary and 60-second notice apply to chat,
+    # image generation, editing and voice synthesis.
     try:
-        answer, agent_metadata = await asyncio.wait_for(
+        answer, agent_metadata = await _await_noya_operation(
+            message,
             run_ai_with_memory(
                 message,
                 payload,
@@ -2034,15 +1988,11 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
                 session_id=f"telegram:{message.chat.id}",
                 images=images or None,
             ),
-            timeout=300,
         )
     except asyncio.TimeoutError:
         answer, agent_metadata = (
             "جوابم بیشتر از پنج دقیقه طول کشید و درخواست متوقف شد. یک بار دیگه امتحان کنیم؟", {}
         )
-    finally:
-        waiting_notice.cancel()
-        await asyncio.gather(waiting_notice, return_exceptions=True)
     t_reply = monotonic()
     # Explicitly allowed low-stakes group silence is not a Telegram reply.
     if agent_metadata.get("no_reply") and not is_analysis:
