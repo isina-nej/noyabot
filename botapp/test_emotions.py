@@ -152,6 +152,23 @@ class EmotionalStateEngineTests(SimpleTestCase):
         self.assertEqual(after_one_more.hurt_score, 69)
         self.assertEqual(after_one_more.relationship_status, "hurt")
 
+    def test_fractional_decay_accumulates_across_frequent_reads(self):
+        at = datetime(2026, 1, 1, tzinfo=timezone.utc)
+        state = apply_event(
+            EmotionalState(),
+            EmotionalEvent("mild_disrespect", event_id="new", severity=12, timestamp=at),
+        )
+        # Minor decay = 4/day; in 3-hour periods each read loses only 0.5.
+        # The second read must not lose or duplicate the fraction.
+        state = decay_state(state, now=at + timedelta(hours=3))
+        self.assertEqual(state.hurt_score, 12)
+        self.assertAlmostEqual(state.decay_fraction, 0.5, places=4)
+        state = decay_state(state, now=at + timedelta(hours=6))
+        self.assertEqual(state.hurt_score, 11)
+        self.assertAlmostEqual(state.decay_fraction, 0, places=4)
+        state = decay_state(state, now=at + timedelta(hours=6))
+        self.assertEqual(state.hurt_score, 11)
+
     def test_affection_increases_warmth_and_trust_without_fake_reconciliation(self):
         baseline = EmotionalState()
         affectionate = apply_event(baseline, "affection", event_id="affection-one")
