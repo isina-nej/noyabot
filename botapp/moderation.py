@@ -164,6 +164,8 @@ def claim_due_actions(limit=100, now=None):
 @transaction.atomic
 def complete_action(action, executed_at=None):
     action = ModerationAction.objects.select_for_update().select_related("group").get(pk=action.pk)
+    if action.status not in {"pending", "processing"}:
+        raise ValueError("action is no longer executable")
     executed_at = executed_at or timezone.now()
     action.status = "executed"
     action.executed_at = executed_at
@@ -212,12 +214,21 @@ def mark_action_failed(action, error):
     action.save(update_fields=["status", "error"])
 
 
+@transaction.atomic
 def cancel_action(action):
-    if action.status not in {"pending", "processing"}:
-        raise ValueError("only pending or processing actions can be cancelled")
+    """Cancel only queued actions with a conditional atomic transition.
+
+    A worker that already claimed an action as 'processing' may have
+    performed Telegram side effects: never promise a successful cancel then.
+    """
+    when = timezone.now()
+    changed = ModerationAction.objects.filter(
+        pk=action.pk, status="pending",
+    ).update(status="cancelled", cancelled_at=when)
+    if not changed:
+        raise ValueError("only pending actions can be cancelled")
     action.status = "cancelled"
-    action.cancelled_at = timezone.now()
-    action.save(update_fields=["status", "cancelled_at"])
+    action.cancelled_at = when
     return action
 
 
