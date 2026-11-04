@@ -26,4 +26,8 @@ class Migration(migrations.Migration):
                 ],
             },
         ),
+        migrations.AddIndex(
+            model_name="messagesnapshot",
+            index=models.Index(fields=["chat_id", "thread_id", "-message_id"], name="noya_context_scan_idx"),
+        ),
     ]
