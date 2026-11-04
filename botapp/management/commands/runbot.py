@@ -1919,6 +1919,14 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             )
             return
 
+    # A bare call of Noya's name is just a request for attention, not a
+    # request to explain another person's question or private life.
+    from botapp.noya_attention import quick_attention_reply
+    attention = quick_attention_reply(message)
+    if attention:
+        await message.reply(attention)
+        return
+
     if use_quota:
         if not await consume_group_quota(message.chat.id, message.chat.title or ""):
             await message.reply(
