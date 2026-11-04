@@ -8,6 +8,9 @@ from botapp.api import (
     group_settings_api,
 )
 from botapp.views import healthcheck
+from botapp.bot_inbox_views import (
+    inbox_page, inbox_bots, inbox_chats, inbox_messages, inbox_send,
+)
 from botapp.ops_api import (
     ops_dependencies, ops_diagnostic_run_detail, ops_diagnostic_run_events, ops_diagnostic_run_report,
     ops_diagnostics, ops_health, ops_live, ops_logs, ops_metrics, ops_ready, ops_runtime, ops_tests,
@@ -15,6 +18,11 @@ from botapp.ops_api import (
 )
 
 urlpatterns = [
+    path("inbox/", inbox_page, name="bot-inbox"),
+    path("inbox/api/bots/", inbox_bots, name="bot-inbox-bots"),
+    path("inbox/api/chats/", inbox_chats, name="bot-inbox-chats"),
+    path("inbox/api/messages/", inbox_messages, name="bot-inbox-messages"),
+    path("inbox/api/send/", inbox_send, name="bot-inbox-send"),
     path("health/", healthcheck, name="healthcheck"),
     path("api/internal/ops/v1/health/", ops_health, name="ops-health"),
     path("api/internal/ops/v1/health/live/", ops_live, name="ops-health-live"),
