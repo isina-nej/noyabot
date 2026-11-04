@@ -63,6 +63,7 @@ def _state_from_row(row: NoyaRelationshipState) -> EmotionalState:
     state = EmotionalState(
         hurt_score=hurt,
         repair_progress=min(repair, hurt),
+        decay_fraction=max(0.0, min(float(getattr(row, "decay_fraction", 0.0) or 0.0), 0.999999)),
         warmth=row.warmth,
         playfulness=row.playfulness,
         trust_context=row.trust_context,
@@ -104,6 +105,7 @@ def _save_state(row: NoyaRelationshipState, state: EmotionalState) -> None:
     data = state.to_dict()
     row.hurt_score = round(data["hurt_score"])
     row.repair_progress = min(round(data["repair_progress"]), row.hurt_score)
+    row.decay_fraction = float(data["decay_fraction"])
     row.warmth = round(data["warmth"])
     row.playfulness = round(data["playfulness"])
     row.trust_context = round(data["trust_context"])
