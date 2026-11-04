@@ -50,6 +50,10 @@ class AttentionTests(SimpleTestCase):
 
 
 class SupersededTimeoutTests(SimpleTestCase):
+    def setUp(self):
+        from botapp.noya_turns import reset_for_tests
+        reset_for_tests()
+
     def tearDown(self):
         from botapp.noya_turns import reset_for_tests
         reset_for_tests()
