@@ -170,3 +170,31 @@ class DeploymentSeparationTests(SimpleTestCase):
             telegram_config.parse_bot_tokens("t1, t2\nt1", "t3"),
             ("t1", "t2", "t3"),
         )
+
+
+class SSRFTransportTests(SimpleTestCase):
+    def test_secure_backend_connects_to_validated_ip_not_untrusted_hostname(self):
+        import socket
+        import httpcore
+        from botapp.web.security import SafeNetworkBackend
+
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "",
+                    ("1.1.1.1", 443))]
+        with (
+            patch("botapp.web.security.socket.getaddrinfo", return_value=answers),
+            patch.object(httpcore.AnyIOBackend, "connect_tcp", new_callable=AsyncMock) as tcp,
+        ):
+            async_to_sync(SafeNetworkBackend().connect_tcp)("example.org", 443)
+        tcp.assert_awaited_once()
+        self.assertEqual(tcp.await_args.args[0], "1.1.1.1")
+        self.assertEqual(tcp.await_args.args[1], 443)
+
+    def test_secure_backend_rejects_private_dns_response(self):
+        import socket
+        from botapp.web.errors import BlockedURLError
+        from botapp.web.security import SafeNetworkBackend
+
+        answers = [(socket.AF_INET, socket.SOCK_STREAM, 6, "", ("127.0.0.1", 443))]
+        with patch("botapp.web.security.socket.getaddrinfo", return_value=answers):
+            with self.assertRaises(BlockedURLError):
+                async_to_sync(SafeNetworkBackend().connect_tcp)("example.org", 443)
