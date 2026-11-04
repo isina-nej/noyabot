@@ -4,7 +4,7 @@ import time
 from aiogram import Bot
 from django.core.management.base import BaseCommand, CommandError
 
-from botapp.management.commands.runbot import BOT_TOKENS
+from botapp.telegram_config import BOT_TOKENS
 from botapp.models import ModerationAction, ModerationLog
 from botapp.moderation import (
     claim_due_actions,
