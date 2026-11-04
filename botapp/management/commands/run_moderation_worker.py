@@ -52,6 +52,12 @@ async def execute_claimed(bots, action_id):
     )
 
 
+def _groups_for_action_ids(action_ids):
+    return dict(ModerationAction.objects.filter(
+        pk__in=action_ids,
+    ).values_list("pk", "group_id"))
+
+
 async def run_batch(limit, concurrency=1):
     await asyncio.to_thread(enqueue_daily_group_schedules)
     await asyncio.to_thread(requeue_stale_processing_actions)
@@ -69,11 +75,8 @@ async def run_batch(limit, concurrency=1):
             from asgiref.sync import sync_to_async
 
             groups = await sync_to_async(
-                lambda: dict(ModerationAction.objects.filter(
-                    pk__in=action_ids,
-                ).values_list("pk", "group_id")),
-                thread_sensitive=True,
-            )()
+                _groups_for_action_ids, thread_sensitive=True,
+            )(action_ids)
             group_locks = {}
             slots = asyncio.Semaphore(parallel)
 
