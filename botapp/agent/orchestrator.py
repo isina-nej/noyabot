@@ -169,8 +169,11 @@ async def _ensure_target_allowed(bot, ctx: AgentContext, tool, target_user_id) -
         member = await bot.get_chat_member(ctx.chat_id, int(target_user_id))
     except ProtectedTarget:
         raise
-    except Exception:
-        return  # capability guard / pipeline will still protect us
+    except Exception as exc:
+        # Unknown Telegram membership status is NOT authorization to act.
+        raise ProtectedTarget(
+            "❌ وضعیت کاربر هدف قابل بررسی نیست؛ عملیات برای امنیت متوقف شد."
+        ) from exc
     if getattr(member, "status", None) in {"creator", "administrator"}:
         raise ProtectedTarget("❌ کاربر هدف ادمین گروه است و نمی‌توان این عملیات را روی او انجام داد.")
 
@@ -380,6 +383,13 @@ async def execute_confirmed(bot, confirmation: AgentConfirmation) -> str:
             timezone_name=_setting("TIME_ZONE", ""),
         )
         validated = tool.validate_params(confirmation.validated_parameters)
+        # The target may have become an administrator after confirmation.
+        # Re-validate the *stored, immutable* target immediately before the
+        # side effect, rather than trusting the approval-time lookup.
+        if tool.name in PROTECTED_ACTION_TOOLS:
+            await _ensure_target_allowed(
+                bot, ctx, tool, getattr(validated, "target_user_id", None),
+            )
         await _audit("started")
         result_text = await tool.handler(ctx, bot, validated)
 
