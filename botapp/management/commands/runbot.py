@@ -1938,11 +1938,10 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     ask = (question or "").strip()
     t_chat_start = monotonic()
     logger.info(
-        "[NOYA-TIMING] 📩 Incoming chat msg_id=%s chat_id=%s from_user=%s: %r",
+        "[NOYA-TIMING] Incoming chat msg_id=%s text_length=%d image_count=%d",
         message.message_id,
-        message.chat.id,
-        getattr(message.from_user, "id", None),
-        ask[:60],
+        len(ask),
+        len(images),
     )
     if images and not ask:
         ask = "این تصویر / استیکر را ببین و پاسخ بده."
