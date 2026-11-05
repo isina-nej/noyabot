@@ -32,7 +32,6 @@ class NoyaChatAction:
         self.message_thread_id = getattr(message, "message_thread_id", None)
         self.action = action
         self.interval = interval
-        self._changed = asyncio.Event()
         self._task: asyncio.Task | None = None
 
     async def _send(self):
@@ -50,11 +49,7 @@ class NoyaChatAction:
 
     async def _loop(self):
         while True:
-            try:
-                await asyncio.wait_for(self._changed.wait(), timeout=self.interval)
-            except asyncio.TimeoutError:
-                pass
-            self._changed.clear()
+            await asyncio.sleep(self.interval)
             await self._send()
 
     async def start(self):
@@ -66,7 +61,9 @@ class NoyaChatAction:
             raise ValueError("Unsupported Telegram chat action")
         if self.action != action:
             self.action = action
-            self._changed.set()
+            # Show the new voice/photo phase immediately, even if sending
+            # the finished media takes less than the next refresh interval.
+            await self._send()
 
     async def stop(self):
         if self._task is not None:
@@ -88,12 +85,10 @@ async def show_chat_action(message, action: str = "typing"):
     thread_id = getattr(message, "message_thread_id", None)
     if (current is not None and current.bot is bot
             and current.chat_id == chat_id and current.message_thread_id == thread_id):
-        previous = current.action
         await current.set_action(action)
-        try:
-            yield current
-        finally:
-            await current.set_action(previous)
+        # Do not restore "typing" after a nested voice/photo send. Otherwise
+        # Telegram could display "typing..." for five seconds after delivery.
+        yield current
         return
 
     sender = NoyaChatAction(message, action=action)
