@@ -386,6 +386,7 @@ from botapp.noya_archive_access import (
     get_group_message,
     inspect_group_image,
     find_group_nickname,
+    read_group_records,
 )
 
 registry.register(Tool(
@@ -444,4 +445,19 @@ registry.register(Tool(
         "name": {"type": "string", "minLength": 2, "maxLength": 64},
     }, "required": ["name"], "additionalProperties": False},
     handler=find_group_nickname, category="chat", emoji="👤",
+))
+
+registry.register(Tool(
+    name="read_group_records",
+    description=(
+        "دسترسی فقط خواندنی به لیست لقب‌های همین گروه (nicknames)، "
+        "آمار روزانه پیام‌ها (activity) یا لاگ تغییر تنظیمات گروه (moderation_logs). "
+        "گزینه لاگ مدیریت فقط بعد از تأیید واقعی مدیر بودن گوینده توسط Telegram فعال است. "
+        "به دیتابیس، فایل‌ها یا لاگ خصوصی سرور دسترسی مستقیم وجود ندارد."
+    ),
+    parameters={"type": "object", "properties": {
+        "category": {"type": "string", "enum": ["nicknames", "activity", "moderation_logs"]},
+        "limit": {"type": "integer", "minimum": 1, "maximum": 20},
+    }, "required": ["category"], "additionalProperties": False},
+    handler=read_group_records, category="chat", emoji="📋",
 ))
