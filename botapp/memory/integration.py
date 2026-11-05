@@ -354,7 +354,7 @@ async def run_ai_with_memory(
         "chat": chat,
         "chat_id": int(getattr(chat, "id", 0) or 0),
         "chat_type": str(getattr(chat, "type", "") or ""),
-        "thread_id": int(getattr(message, "message_thread_id", 0) or 0),
+        "thread_id": __import__("botapp.message_archive", fromlist=["scoped_message_thread_id"]).scoped_message_thread_id(message),
         "current_message_id": int(getattr(message, "message_id", 0) or 0),
         "reply_to_message_id": (
             int(getattr(reply, "message_id", 0) or 0)
