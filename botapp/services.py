@@ -243,6 +243,7 @@ async def call_noya_api(
     social_context: dict | None = None,
     reaction_allowed: bool = False,
     silence_allowed: bool = False,
+    telegram_context: dict | None = None,
     use_agent: bool = True,
 ) -> tuple[str, dict]:
     """Hermes-style: call agent loop with tools, fall back to direct API."""
@@ -277,6 +278,7 @@ async def call_noya_api(
             social_context=social_context,
             reaction_allowed=reaction_allowed,
             silence_allowed=silence_allowed,
+            telegram_context=telegram_context,
         )
         # Outbound gate: provider planning annotations must never be delivered.
         from botapp.agent.responses import sanitize_outgoing_text
