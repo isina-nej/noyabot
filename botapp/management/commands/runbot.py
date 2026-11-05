@@ -576,8 +576,14 @@ async def _deliver_noya_media_sequence(message: Message, metadata: dict) -> bool
     return True
 
 
-async def _deliver_noya_requested_reaction(message: Message, metadata: dict) -> bool:
-    """Apply a requested reaction using only this Telegram update's message IDs."""
+async def _deliver_noya_requested_reaction(
+    message: Message, metadata: dict, *, quiet_failure: bool = False,
+) -> bool:
+    """Apply the model's native emoji reaction to the verified message target.
+
+    In with_reply mode a separate normal reply is allowed. Avoid adding an
+    extra failure notice when a useful answer will already be delivered.
+    """
     from botapp.noya_reactions import SUGGESTED_REACTIONS
 
     request = metadata.get("queued_reaction")
@@ -585,13 +591,18 @@ async def _deliver_noya_requested_reaction(message: Message, metadata: dict) -> 
         return False
     emoji = request.get("emoji")
     target = request.get("target")
-    if emoji not in SUGGESTED_REACTIONS or target not in {"current", "replied"}:
+    mode = request.get("mode", "only")
+    if (emoji not in SUGGESTED_REACTIONS
+            or target not in {"current", "replied"}
+            or mode not in {"only", "with_reply"}):
         return False
     original = message if target == "current" else getattr(message, "reply_to_message", None)
     original_chat = getattr(original, "chat", None)
     if (original is None or original_chat is None
             or int(original_chat.id) != int(message.chat.id)):
-        await reply_noya_answer(message, "روی پیام اصلی ریپلای کن تا بتونم بهش ری‌اکشن بزنم.")
+        metadata["_reaction_delivery_success"] = False
+        if not quiet_failure:
+            await reply_noya_answer(message, "روی پیام اصلی ریپلای کن تا بتونم بهش ری‌اکشن بزنم.")
         return True
     try:
         result = await message.bot.set_message_reaction(
@@ -600,9 +611,11 @@ async def _deliver_noya_requested_reaction(message: Message, metadata: dict) -> 
             reaction=[ReactionTypeEmoji(emoji=emoji)],
         )
     except TelegramAPIError as exc:
-        logger.info("Noya explicit reaction rejected type=%s", type(exc).__name__)
+        logger.info("Noya explicit reaction rejected emoji=%s type=%s", emoji, type(exc).__name__)
         result = False
-    if not result:
+    metadata["_reaction_delivery_success"] = bool(result)
+    logger.info("[NOYA-AGENT] Telegram reaction sent=%s mode=%s", bool(result), mode)
+    if not result and not quiet_failure:
         await reply_noya_answer(message, "تلگرام اجازه ثبت این ری‌اکشن رو روی پیام نداد.")
     return True
 
@@ -1553,14 +1566,25 @@ async def prompt(message: Message, command: CommandObject):
             call_noya_api,
             session_id=f"telegram:{chat.id}",
         )
+        reaction = _meta.get("queued_reaction") or {}
+        with_reply = isinstance(reaction, dict) and reaction.get("mode") == "with_reply"
+        has_reply = bool(
+            (answer or "").strip()
+            or _meta.get("queued_chat_messages")
+            or _meta.get("queued_media_sequence")
+            or _meta.get("generated_image_b64")
+            or _meta.get("generated_tts_audio")
+        )
+        if with_reply:
+            await _deliver_noya_requested_reaction(message, _meta, quiet_failure=has_reply)
         delivered = await _deliver_noya_media_sequence(message, _meta)
-        if not delivered:
+        if not delivered and not with_reply:
             delivered = await _deliver_noya_requested_reaction(message, _meta)
         if not delivered:
             delivered = await _deliver_noya_queued_messages(message, _meta)
         if _meta.get("generated_image_b64") or _meta.get("generated_tts_audio"):
             delivered = await _deliver_noya_agent_media(message, "" if delivered else answer, _meta) or delivered
-        if not delivered:
+        if not delivered and (has_reply or not with_reply):
             await reply_noya_answer(message, answer)
         return
 
@@ -1581,14 +1605,25 @@ async def prompt(message: Message, command: CommandObject):
         call_noya_api,
         session_id=f"telegram:{chat.id}",
     )
+    reaction = _meta.get("queued_reaction") or {}
+    with_reply = isinstance(reaction, dict) and reaction.get("mode") == "with_reply"
+    has_reply = bool(
+        (answer or "").strip()
+        or _meta.get("queued_chat_messages")
+        or _meta.get("queued_media_sequence")
+        or _meta.get("generated_image_b64")
+        or _meta.get("generated_tts_audio")
+    )
+    if with_reply:
+        await _deliver_noya_requested_reaction(message, _meta, quiet_failure=has_reply)
     delivered = await _deliver_noya_media_sequence(message, _meta)
-    if not delivered:
+    if not delivered and not with_reply:
         delivered = await _deliver_noya_requested_reaction(message, _meta)
     if not delivered:
         delivered = await _deliver_noya_queued_messages(message, _meta)
     if _meta.get("generated_image_b64") or _meta.get("generated_tts_audio"):
         delivered = await _deliver_noya_agent_media(message, "" if delivered else answer, _meta) or delivered
-    if not delivered:
+    if not delivered and (has_reply or not with_reply):
         await reply_noya_answer(message, answer)
 
 
@@ -2437,9 +2472,25 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             "جوابم بیشتر از پنج دقیقه طول کشید و درخواست متوقف شد. یک بار دیگه امتحان کنیم؟", {}
         )
     t_reply = monotonic()
+    reaction_request = agent_metadata.get("queued_reaction") or {}
+    reaction_with_reply = (
+        isinstance(reaction_request, dict)
+        and reaction_request.get("mode") == "with_reply"
+    )
+    any_other_reply = bool(
+        (answer or "").strip()
+        or agent_metadata.get("queued_chat_messages")
+        or agent_metadata.get("queued_media_sequence")
+        or agent_metadata.get("generated_image_b64")
+        or agent_metadata.get("generated_tts_audio")
+    )
+    if reaction_with_reply:
+        await _deliver_noya_requested_reaction(
+            message, agent_metadata, quiet_failure=any_other_reply,
+        )
     if await _deliver_noya_media_sequence(message, agent_metadata):
         return
-    if await _deliver_noya_requested_reaction(message, agent_metadata):
+    if not reaction_with_reply and await _deliver_noya_requested_reaction(message, agent_metadata):
         return
     # The model may have prepared several independently-addressed text messages.
     # They are delivered only after the Agent finishes, with no extra default
@@ -2452,6 +2503,10 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         return
     # Explicitly allowed low-stakes group silence is not a Telegram reply.
     if agent_metadata.get("no_reply") and not is_analysis:
+        return
+    # An attached native reaction can be the entire output if the model
+    # produced no other reply; never send a meaningless ellipsis.
+    if reaction_with_reply and not any_other_reply:
         return
     # A trusted model reaction is an alternative to a text reply, never a
     # substitute for analysis or any generated attachment.
