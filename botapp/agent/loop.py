@@ -492,7 +492,7 @@ async def run_agent_loop(
 
                 # This result is owned by this agent task, never another user's
                 # concurrent request. Tool-call IDs remain in the LLM transcript.
-                if tool_name == "generate_image":
+                if tool_name in ("generate_image", "edit_image"):
                     image_b64 = pop_media_result("image")
                     if image_b64:
                         metadata["generated_image_b64"] = image_b64
