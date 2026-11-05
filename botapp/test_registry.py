@@ -14,7 +14,7 @@ from botapp.agent.errors import InvalidToolInput, UnknownTool
 from botapp.agent.registry import registry
 
 
-BASE_CHAT_TOOLS = {"web_search", "fetch_url", "get_time", "generate_image", "text_to_speech"}
+BASE_CHAT_TOOLS = {"web_search", "fetch_url", "get_time", "generate_image", "edit_image", "text_to_speech"}
 
 RESEARCH_CHAT_TOOLS = {
     "x.search_posts", "x.get_post", "x.get_thread", "x.get_user",
