@@ -25,6 +25,7 @@ from aiogram.types import (
     InlineKeyboardMarkup,
     Message,
     ReactionTypeEmoji,
+    ReplyParameters,
 )
 from django.utils import timezone
 
@@ -501,6 +502,67 @@ async def reply_noya_answer(message: Message, answer: str) -> None:
     except Exception:
         logger.debug("bot outgoing inbox capture failed", exc_info=True)
 
+
+
+async def _deliver_noya_queued_messages(message: Message, metadata: dict) -> bool:
+    """Send bounded text messages only to the authenticated incoming chat.
+
+    Each queued message chooses its reply target independently: triggering
+    user message, the previously sent message from this same batch, or none.
+    Never accept destination IDs or raw Telegram message IDs from the model.
+    """
+    from botapp.agent.tools import MAX_CHAT_OUTBOX_MESSAGES, MAX_CHAT_MESSAGE_CHARS
+
+    batch = metadata.get("queued_chat_messages")
+    if not batch:
+        return False
+    if not isinstance(batch, list):
+        logger.warning("Noya outbox had an invalid message list")
+        return False
+    last_sent_id: int | None = None
+    sent_count = 0
+    for item in batch[:MAX_CHAT_OUTBOX_MESSAGES]:
+        if not isinstance(item, dict):
+            continue
+        text = item.get("text")
+        mode = item.get("reply_to", "current")
+        if (not isinstance(text, str) or not text.strip()
+                or len(text) > MAX_CHAT_MESSAGE_CHARS
+                or mode not in ("current", "previous", "none")):
+            continue
+
+        kwargs = {"chat_id": message.chat.id, "text": text.strip(), "parse_mode": None}
+        thread_id = getattr(message, "message_thread_id", None)
+        if thread_id is not None:
+            kwargs["message_thread_id"] = thread_id
+        if mode == "current":
+            kwargs["reply_parameters"] = ReplyParameters(
+                message_id=int(message.message_id),
+                allow_sending_without_reply=True,
+            )
+        elif mode == "previous":
+            if last_sent_id is None:
+                logger.warning("Noya outbox previous reply has no sent predecessor")
+                continue
+            kwargs["reply_parameters"] = ReplyParameters(
+                message_id=last_sent_id,
+                allow_sending_without_reply=True,
+            )
+        try:
+            delivered = await message.bot.send_message(**kwargs)
+        except TelegramAPIError as exc:
+            logger.warning("Noya outbox send failed: %s", type(exc).__name__)
+            continue
+        sent_count += 1
+        sent_id = getattr(delivered, "message_id", None)
+        if isinstance(sent_id, int) and sent_id > 0:
+            last_sent_id = sent_id
+
+    logger.info("[NOYA-AGENT] Multi-message outbox sent=%d requested=%d",
+                sent_count, min(len(batch), MAX_CHAT_OUTBOX_MESSAGES))
+    if sent_count == 0:
+        await reply_noya_answer(message, "نتونستم پیام‌های جداگانه رو ارسال کنم؛ دوباره امتحان کنیم؟")
+    return True
 
 
 async def _deliver_noya_agent_media(message: Message, answer: str, metadata: dict) -> bool:
@@ -1365,7 +1427,11 @@ async def prompt(message: Message, command: CommandObject):
             call_noya_api,
             session_id=f"telegram:{chat.id}",
         )
-        await reply_noya_answer(message, answer)
+        delivered = await _deliver_noya_queued_messages(message, _meta)
+        if _meta.get("generated_image_b64") or _meta.get("generated_tts_audio"):
+            delivered = await _deliver_noya_agent_media(message, "" if delivered else answer, _meta) or delivered
+        if not delivered:
+            await reply_noya_answer(message, answer)
         return
 
     # Group /prompt must honor the same collaboration + daily quota gates as @mention.
@@ -1385,7 +1451,11 @@ async def prompt(message: Message, command: CommandObject):
         call_noya_api,
         session_id=f"telegram:{chat.id}",
     )
-    await reply_noya_answer(message, answer)
+    delivered = await _deliver_noya_queued_messages(message, _meta)
+    if _meta.get("generated_image_b64") or _meta.get("generated_tts_audio"):
+        delivered = await _deliver_noya_agent_media(message, "" if delivered else answer, _meta) or delivered
+    if not delivered:
+        await reply_noya_answer(message, answer)
 
 
 _IMAGE_TRIGGER_RE = re.compile(
@@ -2232,6 +2302,15 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             "جوابم بیشتر از پنج دقیقه طول کشید و درخواست متوقف شد. یک بار دیگه امتحان کنیم؟", {}
         )
     t_reply = monotonic()
+    # The model may have prepared several independently-addressed text messages.
+    # They are delivered only after the Agent finishes, with no extra default
+    # final reply that could duplicate the content.
+    if await _deliver_noya_queued_messages(message, agent_metadata):
+        if agent_metadata.get("generated_image_b64") or agent_metadata.get("generated_tts_audio"):
+            await _deliver_noya_agent_media(message, "", agent_metadata)
+        logger.info("[NOYA-TIMING] multi-message reply finished total_turn=%.1fms",
+                    (monotonic() - t_chat_start) * 1000)
+        return
     # Explicitly allowed low-stakes group silence is not a Telegram reply.
     if agent_metadata.get("no_reply") and not is_analysis:
         return
