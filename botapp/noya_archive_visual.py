@@ -179,20 +179,24 @@ async def inspect_group_media(reference: str = "") -> str:
     kind = row.content_type
     if kind not in {"sticker", "animation", "video_note", "video", "document"}:
         return "این پیام ویدیو‌مسج، GIF یا استیکر قابل بررسی نیست."
+    info = (meta.get("media_by_bot") or {}).get(str(scope.get("bot_id") or "")) or {}
+    if not isinstance(info, dict):
+        return "فایل رسانه برای این ربات معتبر نیست."
+    ref_kind = str(info.get("kind") or "")
+    if ref_kind not in SUPPORTED or not info.get("file_id"):
+        return "فایل این رسانه برای همین ربات ثبت نشده؛ تنها با لینک نمی‌توان GIF/ویدیوی قدیمی را دانلود کرد."
+    if kind != "document" and ref_kind != kind:
+        return "نوع رکورد رسانه با فایل ثبت‌شده مطابقت ندارد."
+    if kind == "document" and ref_kind not in {"document_animation", "document_image"}:
+        return "فقط GIF/تصویر ارسالی به شکل فایل قابل بررسی است."
+    # Cached OCR belongs to an authorized original media reference: do not
+    # expose a previous bot's analysis to a bot that never saw this message.
     if visual:
         return json.dumps({
             "link": _permalink(scope, row), "kind": kind,
             "visible_text": visual, "speech_transcript": transcript,
             "cached": True, "sampling": "previously analyzed frames",
         }, ensure_ascii=False)
-    info = (meta.get("media_by_bot") or {}).get(str(scope.get("bot_id") or "")) or {}
-    ref_kind = str(info.get("kind") or "")
-    if not isinstance(info, dict) or ref_kind not in SUPPORTED or not info.get("file_id"):
-        return "فایل این رسانه برای همین ربات ثبت نشده؛ تنها با لینک نمی‌توان GIF/ویدیوی قدیمی را دانلود کرد."
-    if kind != "document" and ref_kind != kind:
-        return "نوع رکورد رسانه با فایل ثبت‌شده مطابقت ندارد."
-    if kind == "document" and ref_kind not in {"document_animation", "document_image"}:
-        return "فقط GIF/تصویر ارسالی به شکل فایل قابل بررسی است."
     bot = scope.get("bot")
     if bot is None:
         return "دسترسی ربات به دانلود رسانه در این درخواست برقرار نیست."
