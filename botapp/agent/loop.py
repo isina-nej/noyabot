@@ -199,6 +199,12 @@ async def run_agent_loop(
     max_completion_tokens = _bounded_int_env(
         "NOYA_CHAT_MAX_TOKENS", 2048, minimum=128, maximum=8192,
     )
+    # Optional: the router/model may honor reasoning_effort differently.
+    # Disabled by default to preserve the currently deployed behavior.
+    reasoning_effort = os.getenv("NOYA_AGENT_REASONING_EFFORT", "").strip().lower()
+    if reasoning_effort and reasoning_effort not in {"none", "low", "medium", "high"}:
+        logger.warning("[NOYA-AGENT] Invalid NOYA_AGENT_REASONING_EFFORT; ignoring")
+        reasoning_effort = ""
 
     messages: list[dict[str, Any]] = []
     if system_prompt:
@@ -267,6 +273,8 @@ async def run_agent_loop(
             if tools:
                 payload["tools"] = tools
                 payload["tool_choice"] = "auto"
+            if reasoning_effort:
+                payload["reasoning_effort"] = reasoning_effort
 
             logger.info(f"[NOYA-AGENT] Iteration {iteration+1}, model={tool_model}, tools={len(tools)}")
 
