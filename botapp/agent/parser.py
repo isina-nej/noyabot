@@ -125,7 +125,7 @@ def is_scoped_archive_chat_request(text: str) -> bool:
     ):
         return False
     has_message_ref = bool(re.search(
-        r"https?://(?:www\\.)?t\\.me/(?:c/[0-9]+|[a-zA-Z0-9_]{5,32})/[0-9]+",
+        r"https?://(?:www\.)?t\.me/(?:c/[0-9]+|[a-zA-Z0-9_]{5,32})/[0-9]+",
         t,
     ))
     is_lookup = _has_any(
