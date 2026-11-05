@@ -109,7 +109,7 @@ def _message_metadata(message, *, text: str | None = None) -> str:
     fields = {
         "message_link": telegram_message_link(chat, getattr(message, "message_id", 0)),
         "chat_id": int(getattr(chat, "id", 0) or 0),
-        "thread_id": int(getattr(message, "message_thread_id", None) or 0),
+        "thread_id": __import__("botapp.message_archive", fromlist=["scoped_message_thread_id"]).scoped_message_thread_id(message),
         "user_id": int(getattr(user, "id", 0) or 0) or None,
         "message_id": int(getattr(message, "message_id", 0) or 0) or None,
         "reply_to_message_id": int(getattr(replied, "message_id", 0) or 0) or None,
