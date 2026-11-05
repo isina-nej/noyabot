@@ -27,6 +27,9 @@ _INPUT_IMAGES: ContextVar[list[dict] | None] = ContextVar(
 _CHAT_OUTBOX: ContextVar[list[dict[str, str]] | None] = ContextVar(
     "noya_request_chat_outbox", default=None
 )
+# Mixed text/voice/image plan is staged until the complete agent turn succeeds.
+_MEDIA_SEQUENCE: ContextVar[list[dict] | None] = ContextVar("noya_request_media_sequence", default=None)
+_REACTION_REQUEST: ContextVar[dict | None] = ContextVar("noya_request_reaction", default=None)
 MAX_CHAT_OUTBOX_MESSAGES = 6
 MAX_CHAT_MESSAGE_CHARS = 2000
 
@@ -41,6 +44,8 @@ def isolated_media_results(async_func: Callable):
             images[:3] if isinstance(images, list) else []
         )
         outbox_token = _CHAT_OUTBOX.set([])
+        media_sequence_token = _MEDIA_SEQUENCE.set([])
+        reaction_token = _REACTION_REQUEST.set(None)
         from botapp.noya_archive_access import _SCOPE
         # This is an internal object from the authenticated Telegram update.
         # A model tool argument cannot mint or change it.
@@ -53,6 +58,8 @@ def isolated_media_results(async_func: Callable):
             return await async_func(*args, **kwargs)
         finally:
             _SCOPE.reset(archive_token)
+            _REACTION_REQUEST.reset(reaction_token)
+            _MEDIA_SEQUENCE.reset(media_sequence_token)
             _CHAT_OUTBOX.reset(outbox_token)
             _INPUT_IMAGES.reset(input_token)
             _MEDIA_RESULTS.reset(token)
@@ -68,6 +75,96 @@ def _store_media_result(kind: str, payload: Any) -> None:
 def pop_media_result(kind: str):
     results = _MEDIA_RESULTS.get()
     return results.pop(kind, None) if results is not None else None
+
+
+def pop_media_sequence() -> list[dict]:
+    items = _MEDIA_SEQUENCE.get()
+    if items is None:
+        return []
+    output = list(items)
+    items.clear()
+    return output
+
+
+def pop_reaction_request() -> dict | None:
+    return _REACTION_REQUEST.get()
+
+
+async def _send_media_sequence(items: list[dict] | None = None) -> str:
+    """Stage one ordered multi-modal reply (text -> voice -> picture etc.).
+
+    Each media step is generated from that step's actual payload, not from the
+    user's raw instruction. No telegram call or file path is model-controlled.
+    """
+    import base64
+    from botapp.noya_chat_actions import set_active_chat_action
+    from botapp.services import generate_noya_image, generate_noya_tts
+    outbox = _MEDIA_SEQUENCE.get()
+    if outbox is None:
+        return "Error: خارج از گفت‌وگوی جاری امکان ارسال نیست."
+    if outbox or (_CHAT_OUTBOX.get() or []):
+        return "Error: برای جلوگیری از ارسال تکراری، یک دسته پیام در هر درخواست مجاز است."
+    if not isinstance(items, list) or not 2 <= len(items) <= 5:
+        return "Error: برای این ابزار بین دو تا پنج مرحله بده."
+    prepared = []
+    media_count = 0
+    for part in items:
+        if not isinstance(part, dict):
+            return "Error: ساختار مرحله نامعتبر است."
+        kind = part.get("kind")
+        mode = part.get("reply_to", "none")
+        text = part.get("text", "")
+        if kind not in {"text", "voice", "image"} or mode not in {"current", "previous", "none"}:
+            return "Error: نوع مرحله یا ریپلای معتبر نیست."
+        if not isinstance(text, str) or not text.strip():
+            return "Error: هر مرحله باید متن واقعی یا توصیف تصویر داشته باشد."
+        cap = 1900 if kind == "text" else (1500 if kind == "image" else 1200)
+        if len(text) > cap:
+            return "Error: متن مرحله بیش از سقف مجاز است."
+        if mode == "previous" and not prepared:
+            return "Error: اولین مرحله نمی‌تواند به پیام قبلی خودت ریپلای کند."
+        if kind != "text":
+            media_count += 1
+        prepared.append({"kind": kind, "reply_to": mode, "text": text.strip()})
+    if media_count > 2 or not media_count:
+        return "Error: حداکثر دو فایل صوتی/تصویری در یک دسته مجاز است."
+    generated = []
+    for entry in prepared:
+        part = dict(entry)
+        if part["kind"] == "voice":
+            await set_active_chat_action("record_voice")
+            audio = await generate_noya_tts(part["text"])
+            if not isinstance(audio, bytes) or not (0 < len(audio) <= 20_000_000):
+                return "Error: ساخت ویس این مرحله ناموفق شد؛ هیچ پیام ناقصی ارسال نشده."
+            part["bytes"] = audio
+        elif part["kind"] == "image":
+            await set_active_chat_action("upload_photo")
+            picture = await generate_noya_image(part["text"])
+            if not isinstance(picture, bytes) or not (0 < len(picture) <= 20_000_000):
+                return "Error: ساخت عکس این مرحله ناموفق شد؛ هیچ پیام ناقصی ارسال نشده."
+            part["bytes"] = picture
+        generated.append(part)
+    outbox.extend(generated)
+    return (f"{len(generated)} مرحله به همان ترتیب آماده ارسال است. "
+            "بعد از پایان Agent عکس و ویس و متن واقعی ارسال می‌شوند؛ پاسخ نهایی تکراری ننویس.")
+
+
+async def _react_to_chat_message(emoji: str = "❤️", target: str = "current") -> str:
+    """Stage an explicit reaction to a Telegram-verified message in this chat."""
+    from botapp.noya_reactions import SUGGESTED_REACTIONS
+    from botapp.noya_archive_access import _SCOPE
+    scope = _SCOPE.get()
+    if not isinstance(scope, dict) or not scope.get("bot") or not scope.get("chat_id"):
+        return "Error: پیام تلگرام احرازشده در این درخواست موجود نیست."
+    if emoji not in SUGGESTED_REACTIONS or target not in {"current", "replied"}:
+        return "Error: ایموجی یا هدف ری‌اکشن مجاز نیست."
+    mid = int(scope.get("current_message_id") or 0)
+    if target == "replied":
+        mid = int(scope.get("reply_to_message_id") or 0)
+    if mid <= 0 or target == "replied" and mid >= int(scope.get("current_message_id") or 0):
+        return "Error: پیام موردنظر برای ری‌اکشن در همین گفتگو مشخص نیست."
+    _REACTION_REQUEST.set({"emoji": emoji, "target": target})
+    return "درخواست ری‌اکشن برای پیام همین گفتگو ثبت شد؛ نتیجه فقط بعد از ارسال واقعی تلگرام مشخص می‌شود."
 
 
 def pop_chat_outbox() -> list[dict[str, str]]:
@@ -460,4 +557,44 @@ registry.register(Tool(
         "limit": {"type": "integer", "minimum": 1, "maximum": 20},
     }, "required": ["category"], "additionalProperties": False},
     handler=read_group_records, category="chat", emoji="📋",
+))
+
+registry.register(Tool(
+    name="send_media_sequence",
+    description=(
+        "برای درخواست ترکیبی چند پیام از انواع متن، ویس و عکس، یک ترتیب مشخص بساز. "
+        "هر مرحله kind=text/voice/image دارد؛ متنِ voice باید همان محتوایی باشد "
+        "که قرار است خوانده شود، نه جمله دستور کاربر. text در image پرامپت تصویری است. "
+        "همه مراحل پس از تولید واقعی فایل‌ها به ترتیب ارسال می‌شوند. "
+        "reply_to=current ریپلای کاربر، previous پیام قبلی، none بدون ریپلای. "
+        "برای درخواست چندمرحله‌ای فقط از این ابزار استفاده کن؛ از TTS تک‌مرحله‌ای استفاده نکن."
+    ),
+    parameters={"type": "object", "properties": {
+        "items": {
+            "type": "array", "minItems": 2, "maxItems": 5,
+            "items": {
+                "type": "object", "properties": {
+                    "kind": {"type": "string", "enum": ["text", "voice", "image"]},
+                    "text": {"type": "string", "minLength": 1, "maxLength": 1900},
+                    "reply_to": {"type": "string", "enum": ["current", "previous", "none"]},
+                }, "required": ["kind", "text", "reply_to"], "additionalProperties": False,
+            },
+        },
+    }, "required": ["items"], "additionalProperties": False},
+    handler=_send_media_sequence, category="chat", emoji="🎞️",
+))
+
+registry.register(Tool(
+    name="react_to_chat_message",
+    description=(
+        "ری‌اکشن واقعی روی پیام درخواست‌کننده در تلگرام؛ "
+        "target=current پیام همین درخواست، replied پیام ریپلای‌شده در همین چت. "
+        "برای «روی پیام من قلب بزن» emoji=❤️ و target=current انتخاب کن. "
+        "فقط یک پیام معتبر؛ بدون شناسه و چت دلخواه."
+    ),
+    parameters={"type": "object", "properties": {
+        "emoji": {"type": "string", "enum": ["❤️", "👍", "🥰", "👏", "😁", "🎉", "🤩", "🙏", "🤣", "🤝", "👀", "🔥"]},
+        "target": {"type": "string", "enum": ["current", "replied"]},
+    }, "required": ["emoji", "target"], "additionalProperties": False},
+    handler=_react_to_chat_message, category="chat", emoji="❤️",
 ))
