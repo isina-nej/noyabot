@@ -116,9 +116,12 @@ def archived_context_for_message(message, query: str) -> str:
         identity = identities.get(row.sender_user_id)
         name = (row.sender_name or "ناشناس")[:80]
         if identity:
-            alias = (identity.nickname or "").strip()
-            if alias:
-                name += " (لقب اعلام‌شده: " + alias[:64] + ")"
+            self_name = (identity.nickname or "").strip()
+            group_name = (identity.assigned_nickname or "").strip()
+            if self_name:
+                name += " (لقب اعلام‌شده توسط خودش: " + self_name[:64] + ")"
+            if group_name:
+                name += " (لقب گروهی: " + group_name[:64] + ")"
         username = (" @" + row.sender_username[:64]) if row.sender_username else ""
         text = _record_text(row)
         line = f"#{row.message_id} user_id={row.sender_user_id or '-'} {name}{username}: {text}\n"
