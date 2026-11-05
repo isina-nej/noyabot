@@ -66,6 +66,28 @@ def _content_type(message) -> str:
     return "other"
 
 
+def scoped_message_thread_id(message) -> int:
+    """Topic ID only when the verified Telegram message represents a topic.
+
+    In non-forum supergroups Telegram can expose a message_thread_id equal
+    to the message's own ID (not a forum topic). Never isolate that message
+    from the ordinary group history. Real forum topics remain isolated.
+    """
+    raw = int(getattr(message, "message_thread_id", None) or 0)
+    if raw <= 0:
+        return 0
+    chat = getattr(message, "chat", None)
+    if getattr(chat, "is_forum", None) is False:
+        return 0
+    if getattr(message, "is_topic_message", None) is False:
+        return 0
+    mid = int(getattr(message, "message_id", 0) or 0)
+    if (raw == mid and getattr(chat, "is_forum", None) is not True
+            and getattr(message, "is_topic_message", None) is not True):
+        return 0
+    return raw
+
+
 def snapshot_payload(message, bot_id: int = 0) -> dict:
     user = getattr(message, "from_user", None)
     sender_chat = getattr(message, "sender_chat", None)
@@ -83,7 +105,7 @@ def snapshot_payload(message, bot_id: int = 0) -> dict:
     if bot_id and file_id:
         metadata["media_by_bot"] = {str(int(bot_id)): {"file_id": file_id, "kind": kind}}
     return {
-        "thread_id": int(getattr(message, "message_thread_id", None) or 0),
+        "thread_id": scoped_message_thread_id(message),
         "sender_user_id": int(user.id) if user else None,
         "sender_chat_id": int(sender_chat.id) if sender_chat else None,
         "sender_name": (getattr(user, "full_name", "") if user else "")[:255],
@@ -110,7 +132,7 @@ def archive_message(
     # Telegram may omit message_thread_id from the replied-to envelope.
     # A verified same-chat reply supplies its parent's topic in this case.
     if thread_id_override is not None and not getattr(message, "message_thread_id", None):
-        payload["thread_id"] = int(thread_id_override)
+        payload["thread_id"] = max(0, int(thread_id_override))
     snapshot, created = MessageSnapshot.objects.get_or_create(
         chat_id=int(chat.id),
         message_id=int(message.message_id),
@@ -124,6 +146,16 @@ def archive_message(
                 setattr(snapshot, field, payload[field])
                 changed = True
         updated = ["text", "caption", "edited_at"] if changed else []
+        # A previously archived non-forum message can have been assigned its
+        # own message ID as a spurious topic. The original live update from
+        # Telegram lets us correct that without rewriting genuine forum data.
+        if (payload["thread_id"] == 0 and int(snapshot.thread_id or 0) == int(message.message_id)
+                and (getattr(chat, "is_forum", None) is False
+                     or getattr(message, "is_topic_message", None) is False
+                     or (getattr(chat, "is_forum", None) is not True
+                         and getattr(message, "is_topic_message", None) is not True))):
+            snapshot.thread_id = 0
+            updated.append("thread_id")
         if (thread_id_override is not None and int(snapshot.thread_id or 0) == 0
                 and payload["thread_id"]):
             snapshot.thread_id = payload["thread_id"]
