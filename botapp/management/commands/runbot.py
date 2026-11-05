@@ -504,6 +504,109 @@ async def reply_noya_answer(message: Message, answer: str) -> None:
 
 
 
+async def _deliver_noya_media_sequence(message: Message, metadata: dict) -> bool:
+    """Deliver an Agent-produced ordered sequence to this authenticated chat."""
+    sequence = metadata.get("queued_media_sequence")
+    if not isinstance(sequence, list) or not sequence:
+        return False
+    if len(sequence) > 5:
+        logger.warning("Noya mixed-media batch exceeded limit")
+        return False
+
+    last_sent = None
+    count = 0
+    for part in sequence:
+        if not isinstance(part, dict):
+            continue
+        kind = part.get("kind")
+        mode = part.get("reply_to")
+        text = part.get("text")
+        if (kind not in {"text", "voice", "image"}
+                or mode not in {"current", "previous", "none"}
+                or not isinstance(text, str) or not text.strip()
+                or kind == "text" and len(text) > 1900):
+            continue
+        kw = {"chat_id": message.chat.id}
+        thread_id = getattr(message, "message_thread_id", None)
+        if thread_id is not None:
+            kw["message_thread_id"] = thread_id
+        if mode == "current":
+            kw["reply_parameters"] = ReplyParameters(
+                message_id=int(message.message_id), allow_sending_without_reply=True,
+            )
+        elif mode == "previous":
+            if not last_sent:
+                logger.warning("Noya mixed-media previous reply lacks preceding message")
+                continue
+            kw["reply_parameters"] = ReplyParameters(
+                message_id=last_sent, allow_sending_without_reply=True,
+            )
+        try:
+            if kind == "text":
+                await set_active_chat_action("typing")
+                sent = await message.bot.send_message(text=text.strip(), parse_mode=None, **kw)
+            else:
+                data = part.get("bytes")
+                if not isinstance(data, bytes) or not 0 < len(data) <= 20_000_000:
+                    logger.warning("Noya mixed-media attachment missing/oversize")
+                    continue
+                if kind == "voice":
+                    await set_active_chat_action("upload_voice")
+                    sent = await message.bot.send_voice(
+                        voice=BufferedInputFile(data, filename="noya_voice.mp3"), **kw,
+                    )
+                else:
+                    await set_active_chat_action("upload_photo")
+                    sent = await message.bot.send_photo(
+                        photo=BufferedInputFile(data, filename="noya_image.png"), **kw,
+                    )
+        except Exception as exc:
+            logger.warning("Noya mixed-media delivery failed kind=%s type=%s",
+                           kind, type(exc).__name__)
+            continue
+        count += 1
+        mid = getattr(sent, "message_id", None)
+        if isinstance(mid, int) and mid > 0:
+            last_sent = mid
+
+    logger.info("[NOYA-AGENT] Mixed-media sequence sent=%d requested=%d",
+                count, len(sequence))
+    if count == 0:
+        await reply_noya_answer(message, "ارسال فایل‌ها و پیام‌ها ناموفق بود؛ دوباره امتحان کنیم؟")
+    return True
+
+
+async def _deliver_noya_requested_reaction(message: Message, metadata: dict) -> bool:
+    """Apply a requested reaction using only this Telegram update's message IDs."""
+    from botapp.noya_reactions import SUGGESTED_REACTIONS
+
+    request = metadata.get("queued_reaction")
+    if not isinstance(request, dict):
+        return False
+    emoji = request.get("emoji")
+    target = request.get("target")
+    if emoji not in SUGGESTED_REACTIONS or target not in {"current", "replied"}:
+        return False
+    original = message if target == "current" else getattr(message, "reply_to_message", None)
+    original_chat = getattr(original, "chat", None)
+    if (original is None or original_chat is None
+            or int(original_chat.id) != int(message.chat.id)):
+        await reply_noya_answer(message, "روی پیام اصلی ریپلای کن تا بتونم بهش ری‌اکشن بزنم.")
+        return True
+    try:
+        result = await message.bot.set_message_reaction(
+            chat_id=message.chat.id,
+            message_id=int(original.message_id),
+            reaction=[ReactionTypeEmoji(emoji=emoji)],
+        )
+    except TelegramAPIError as exc:
+        logger.info("Noya explicit reaction rejected type=%s", type(exc).__name__)
+        result = False
+    if not result:
+        await reply_noya_answer(message, "تلگرام اجازه ثبت این ری‌اکشن رو روی پیام نداد.")
+    return True
+
+
 async def _deliver_noya_queued_messages(message: Message, metadata: dict) -> bool:
     """Send bounded text messages only to the authenticated incoming chat.
 
@@ -1427,7 +1530,11 @@ async def prompt(message: Message, command: CommandObject):
             call_noya_api,
             session_id=f"telegram:{chat.id}",
         )
-        delivered = await _deliver_noya_queued_messages(message, _meta)
+        delivered = await _deliver_noya_media_sequence(message, _meta)
+        if not delivered:
+            delivered = await _deliver_noya_requested_reaction(message, _meta)
+        if not delivered:
+            delivered = await _deliver_noya_queued_messages(message, _meta)
         if _meta.get("generated_image_b64") or _meta.get("generated_tts_audio"):
             delivered = await _deliver_noya_agent_media(message, "" if delivered else answer, _meta) or delivered
         if not delivered:
@@ -1451,7 +1558,11 @@ async def prompt(message: Message, command: CommandObject):
         call_noya_api,
         session_id=f"telegram:{chat.id}",
     )
-    delivered = await _deliver_noya_queued_messages(message, _meta)
+    delivered = await _deliver_noya_media_sequence(message, _meta)
+    if not delivered:
+        delivered = await _deliver_noya_requested_reaction(message, _meta)
+    if not delivered:
+        delivered = await _deliver_noya_queued_messages(message, _meta)
     if _meta.get("generated_image_b64") or _meta.get("generated_tts_audio"):
         delivered = await _deliver_noya_agent_media(message, "" if delivered else answer, _meta) or delivered
     if not delivered:
@@ -2302,6 +2413,10 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             "جوابم بیشتر از پنج دقیقه طول کشید و درخواست متوقف شد. یک بار دیگه امتحان کنیم؟", {}
         )
     t_reply = monotonic()
+    if await _deliver_noya_media_sequence(message, agent_metadata):
+        return
+    if await _deliver_noya_requested_reaction(message, agent_metadata):
+        return
     # The model may have prepared several independently-addressed text messages.
     # They are delivered only after the Agent finishes, with no extra default
     # final reply that could duplicate the content.
