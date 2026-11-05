@@ -165,6 +165,7 @@ class ArchiveLinksAndToolsTests(TestCase):
     @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
     def test_image_reference_must_be_for_correct_bot_and_previously_archived(self):
         archive_message(_message(photo=True), bot_id=111)
+        archive_message(_message(119, photo=True), bot_id=0)
         denied = _query(_scope(bot_id=222), inspect_group_image, "120")
         self.assertIn("ثبت نشده", denied)
         self.assertIn("ثبت نشده", _query(_scope(), inspect_group_image, "119"))
