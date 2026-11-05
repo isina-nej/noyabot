@@ -486,6 +486,8 @@ from botapp.noya_archive_access import (
     inspect_group_image,
     find_group_nickname,
     read_group_records,
+    trace_group_message,
+    reply_to_group_message,
 )
 
 registry.register(Tool(
@@ -599,4 +601,34 @@ registry.register(Tool(
         "target": {"type": "string", "enum": ["current", "replied"]},
     }, "required": ["emoji", "target"], "additionalProperties": False},
     handler=_react_to_chat_message, category="chat", emoji="❤️",
+))
+
+registry.register(Tool(
+    name="trace_group_message",
+    description=(
+        "برای «این عکس/فال برای کی بود» لینک یا شناسهٔ اصلی را ردیابی کن. "
+        "فرستنده، پیام ریپلای‌شده و درخواست‌های قبلی همین گروه را با مدرک برمی‌گرداند. "
+        "attribution=adjacent_unconfirmed فقط حدس از هم‌زمانی است و قطعیت ندارد."
+    ),
+    parameters={"type": "object", "properties": {
+        "reference": {"type": "string", "minLength": 1, "maxLength": 200},
+    }, "required": ["reference"], "additionalProperties": False},
+    handler=trace_group_message, category="chat", emoji="🔎",
+))
+
+registry.register(Tool(
+    name="reply_to_group_message",
+    description=(
+        "ارسال پاسخ واقعی و ریپلای به یک پیام قبلاً مشاهده‌شده در همین گروه، "
+        "با تگ اختیاری فرستندهٔ همان پیام از شناسهٔ واقعی تلگرام. "
+        "reference لینک/شماره پیام مقصد؛ mention_sender=true برای تگ امن. "
+        "قبل از ارسال درباره صاحب فال، trace_group_message را بخوان؛ "
+        "اگر شواهد فقط کنار هم آمدن پیام‌هاست، ادعای قطعیت نکن."
+    ),
+    parameters={"type": "object", "properties": {
+        "reference": {"type": "string", "minLength": 1, "maxLength": 200},
+        "text": {"type": "string", "minLength": 1, "maxLength": 1600},
+        "mention_sender": {"type": "boolean"},
+    }, "required": ["reference", "text"], "additionalProperties": False},
+    handler=reply_to_group_message, category="chat", emoji="↩️",
 ))
