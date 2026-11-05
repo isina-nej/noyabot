@@ -42,7 +42,9 @@ def _message(*, text=REQUEST, message_id=93758):
 class ArchiveRoutingTests(TestCase):
     def test_specific_fortune_link_request_is_not_an_admin_command(self):
         self.assertTrue(is_scoped_archive_chat_request(REQUEST))
-        self.assertTrue(is_message_analysis_request(REQUEST))
+        # The older generic parser misses this shape; scoped routing must
+        # cover it independently without silently changing admin heuristics.
+        self.assertFalse(is_message_analysis_request(REQUEST))
         self.assertFalse(is_scoped_archive_chat_request("نویا تعداد ادمین های گروه چنده"))
         self.assertFalse(is_scoped_archive_chat_request(
             "نویا پیام https://t.me/c/3861069387/93687 رو پین کن"
