@@ -50,7 +50,7 @@ def _record_text(row) -> str:
     visual = str(media.get("visual_summary") or "").strip()
     image_text = str(media.get("image_text") or "").strip()
     if image_text:
-        parts.append("متن بررسی‌شده داخل عکس: " + image_text[:750])
+        parts.append("متن و محتوای بررسی‌شدهٔ رسانه: " + image_text[:750])
     if transcript:
         parts.append("گفتار رسانه: " + transcript[:750])
     if visual:
