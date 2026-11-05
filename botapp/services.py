@@ -287,7 +287,13 @@ async def call_noya_api(
             "[NOYA-TIMING] 🤖 Agent loop done in %.1fms (total=%.1fms, tools=%s)",
             agent_ms, total_ms, metadata.get("tools_used", []),
         )
-        return (reply if (metadata.get("reaction_emoji") or metadata.get("no_reply"))
+        # A real tool-generated file is a valid outcome even if the provider
+        # returns no text in its final iteration. Do not caption the photo
+        # with a misleading "no AI response" error.
+        has_media = bool(
+            metadata.get("generated_image_b64") or metadata.get("generated_tts_audio")
+        )
+        return (reply if (metadata.get("reaction_emoji") or metadata.get("no_reply") or has_media)
                 else (reply or "پاسخی از هوش مصنوعی دریافت نشد.")), metadata
 
     # ── Fallback: direct API call (old path) ──

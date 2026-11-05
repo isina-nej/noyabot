@@ -17,6 +17,11 @@ from typing import Any, Callable
 _MEDIA_RESULTS: ContextVar[dict[str, Any] | None] = ContextVar(
     "noya_request_media_results", default=None
 )
+# Read-only, per-turn media from the message the user actually supplied.
+# Never accept file paths, Telegram IDs or external URLs from the LLM.
+_INPUT_IMAGES: ContextVar[list[dict] | None] = ContextVar(
+    "noya_request_input_images", default=None
+)
 
 
 def isolated_media_results(async_func: Callable):
@@ -24,9 +29,14 @@ def isolated_media_results(async_func: Callable):
     @wraps(async_func)
     async def wrapper(*args, **kwargs):
         token = _MEDIA_RESULTS.set({})
+        images = kwargs.get("images")
+        input_token = _INPUT_IMAGES.set(
+            images[:3] if isinstance(images, list) else []
+        )
         try:
             return await async_func(*args, **kwargs)
         finally:
+            _INPUT_IMAGES.reset(input_token)
             _MEDIA_RESULTS.reset(token)
     return wrapper
 
@@ -177,6 +187,42 @@ async def _text_to_speech(text: str = "") -> str:
     return f"صدا با موفقیت تولید شد ({len(audio)} bytes). در حال ارسال..."
 
 
+async def _edit_image(instruction: str = "") -> str:
+    """Edit only a photo explicitly available in this user's current turn."""
+    from botapp.services import edit_noya_image
+    from botapp.noya_chat_actions import set_active_chat_action
+    images = _INPUT_IMAGES.get() or []
+    target = next(
+        (img for img in images
+         if isinstance(img, dict) and img.get("source") in ("reply", "reply_parent")
+         and isinstance(img.get("data"), bytes)),
+        None,
+    )
+    if target is None:
+        target = next(
+            (img for img in images
+             if isinstance(img, dict) and isinstance(img.get("data"), bytes)),
+            None,
+        )
+    if target is None:
+        return "برای ویرایش، کاربر باید عکس را ارسال کند یا روی عکس ریپلای بزند."
+    source = target["data"]
+    mime = target.get("mime", "image/jpeg")
+    if (not source or len(source) > 3_500_000
+            or mime not in ("image/jpeg", "image/png", "image/webp")):
+        return "تصویر برای ویرایش پشتیبانی نمی‌شود."
+    if not instruction.strip():
+        return "لطفاً تغییر موردنظر برای عکس را مشخص کن."
+    await set_active_chat_action("upload_photo")
+    edited = await edit_noya_image(instruction.strip(), source, mime)
+    if not edited:
+        return "ویرایش تصویر موفق نبود؛ به کاربر بگو دوباره تلاش کند."
+    import base64
+    _store_media_result("image", base64.b64encode(edited).decode("ascii"))
+    return "تصویر ویرایش شد و برای ارسال به کاربر آماده است."
+
+
+
 # ── Registration ──
 
 registry.register(Tool(
@@ -216,5 +262,22 @@ registry.register(Tool(
     description="تبدیل متن به صدا. متن فارسی یا انگلیسی بده.",
     parameters={"type": "object", "properties": {"text": {"type": "string", "description": "متن برای تبدیل به صدا"}}, "required": ["text"]},
     handler=_text_to_speech, emoji="🔊",
+    category="chat",
+))
+
+registry.register(Tool(
+    name="edit_image",
+    description=(
+        "ویرایش عکس همین پیام یا عکس ریپلای‌شده. "
+        "تغییر دلخواه را دقیق توضیح بده؛ تصویر اصلی خودکار و ایمن از پیام جاری گرفته می‌شود. "
+        "اگر عکس نداریم، این ابزار نمی‌تواند تصویر بسازد؛ برای تصویر تازه از generate_image استفاده کن."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {"instruction": {"type": "string", "description": "دستور تغییر تصویر", "minLength": 1, "maxLength": 2000}},
+        "required": ["instruction"],
+        "additionalProperties": False,
+    },
+    handler=_edit_image, emoji="✏️",
     category="chat",
 ))
