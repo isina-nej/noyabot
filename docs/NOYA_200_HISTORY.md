@@ -16,9 +16,14 @@
   in MessageSnapshot.metadata (noya_media).
 * Telegram-visible first_name, last_name and username are stored with a
   chat-scoped numeric Telegram user ID. These are NOT verified legal names.
-  Nicknames are stored only if the sender themselves says "منو X صدا کن" or
-  uses /nickname X. /nickname_clear removes that chat's nickname.
-  /forget_all confirm in a private chat deletes observed identity rows too.
+  A user can set their own nickname with "منو X صدا کن" or /nickname X.
+  **Replying to another human member with /nickname X assigns that member a
+  group label**, distinctly stored from their own self-chosen nickname. The
+  label is a claim by the assigning member, not verified identity. It is
+  bound to the replied-to Telegram numeric user ID in this group. /nickname_clear
+  without a reply clears your own nicknames; when replying it removes only a
+  group label assigned by you. /forget_all confirm in a private chat deletes
+  observed identity rows and group labels assigned by the requesting user.
 
 ## Platform limits
 
