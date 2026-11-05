@@ -183,3 +183,24 @@ class AgentLatencyBudgetTests(SimpleTestCase):
             reply, metadata = _ask()
         self.assertIn("خطا در پردازش پاسخ", reply)
         self.assertEqual(metadata, {})
+
+    def test_optional_reasoning_effort_added_when_configured(self):
+        client = _Client([_Response({"role": "assistant", "content": "سلام!"})])
+        with patch.dict(os.environ, {"NOYA_AGENT_REASONING_EFFORT": "low"}), patch(
+            "botapp.agent.loop.httpx.AsyncClient", return_value=client
+        ):
+            reply, _ = _ask()
+        self.assertEqual(reply, "سلام!")
+        payload = client.post.await_args.kwargs["json"]
+        self.assertEqual(payload["reasoning_effort"], "low")
+        self.assertEqual(payload["max_tokens"], 2048)
+
+    def test_unsupported_reasoning_effort_is_not_sent(self):
+        for value in ("", "unsupported", "DROP TABLE users"):
+            client = _Client([_Response({"role": "assistant", "content": "سلام!"})])
+            with patch.dict(os.environ, {"NOYA_AGENT_REASONING_EFFORT": value}), patch(
+                "botapp.agent.loop.httpx.AsyncClient", return_value=client
+            ):
+                reply, _ = _ask()
+            self.assertEqual(reply, "سلام!")
+            self.assertNotIn("reasoning_effort", client.post.await_args.kwargs["json"])
