@@ -149,22 +149,41 @@ async def _send_media_sequence(items: list[dict] | None = None) -> str:
             "بعد از پایان Agent عکس و ویس و متن واقعی ارسال می‌شوند؛ پاسخ نهایی تکراری ننویس.")
 
 
-async def _react_to_chat_message(emoji: str = "❤️", target: str = "current") -> str:
-    """Stage an explicit reaction to a Telegram-verified message in this chat."""
-    from botapp.noya_reactions import SUGGESTED_REACTIONS
+async def _react_to_chat_message(
+    emoji: str = "❤️", target: str = "current", mode: str = "only",
+) -> str:
+    """Queue a verified current-chat reaction, with optional normal reply."""
+    from botapp.noya_reactions import (
+        SUGGESTED_REACTIONS, UNSUPPORTED_REQUESTED_REACTIONS,
+    )
     from botapp.noya_archive_access import _SCOPE
+
     scope = _SCOPE.get()
     if not isinstance(scope, dict) or not scope.get("bot") or not scope.get("chat_id"):
         return "Error: پیام تلگرام احرازشده در این درخواست موجود نیست."
+    if emoji in UNSUPPORTED_REQUESTED_REACTIONS:
+        return (
+            "Error: 💙 ری‌اکشن استاندارد قابل‌ارسال توسط ربات با Telegram Bot API نیست. "
+            "به‌جایش ❤️ یا 💘 را فقط در صورت تأیید کاربر پیشنهاد کن؛ "
+            "هرگز ادعای ثبت قلب آبی نکن."
+        )
     if emoji not in SUGGESTED_REACTIONS or target not in {"current", "replied"}:
         return "Error: ایموجی یا هدف ری‌اکشن مجاز نیست."
+    if mode not in {"only", "with_reply"}:
+        return "Error: حالت ری‌اکشن باید only یا with_reply باشد."
+    if mode == "only" and scope.get("reaction_only_allowed") is not True:
+        return "Error: این درخواست به پاسخ مفید نیاز دارد؛ ری‌اکشن تنها کافی نیست."
     mid = int(scope.get("current_message_id") or 0)
     if target == "replied":
         mid = int(scope.get("reply_to_message_id") or 0)
-    if mid <= 0 or target == "replied" and mid >= int(scope.get("current_message_id") or 0):
+    if mid <= 0 or (target == "replied" and mid >= int(scope.get("current_message_id") or 0)):
         return "Error: پیام موردنظر برای ری‌اکشن در همین گفتگو مشخص نیست."
-    _REACTION_REQUEST.set({"emoji": emoji, "target": target})
-    return "درخواست ری‌اکشن برای پیام همین گفتگو ثبت شد؛ نتیجه فقط بعد از ارسال واقعی تلگرام مشخص می‌شود."
+    _REACTION_REQUEST.set({"emoji": emoji, "target": target, "mode": mode})
+    return (
+        "ری‌اکشن برای پیام تأییدشده آماده شد؛ "
+        + ("هم پیام پاسخ را هم تولید کن؛ تا ثبت واقعی تلگرام ادعای موفقیت نکن."
+           if mode == "with_reply" else "نیازی به پیام متنی جدا نیست.")
+    )
 
 
 def pop_chat_outbox() -> list[dict[str, str]]:
@@ -588,17 +607,23 @@ registry.register(Tool(
     handler=_send_media_sequence, category="chat", emoji="🎞️",
 ))
 
+from botapp.noya_reactions import SUGGESTED_REACTIONS, UNSUPPORTED_REQUESTED_REACTIONS
+
 registry.register(Tool(
     name="react_to_chat_message",
     description=(
-        "ری‌اکشن واقعی روی پیام درخواست‌کننده در تلگرام؛ "
-        "target=current پیام همین درخواست، replied پیام ریپلای‌شده در همین چت. "
-        "برای «روی پیام من قلب بزن» emoji=❤️ و target=current انتخاب کن. "
-        "فقط یک پیام معتبر؛ بدون شناسه و چت دلخواه."
+        "ری‌اکشن تلگرام روی پیام همین درخواست (current) یا پیام ریپلای‌شده (replied). "
+        "mode=only برای واکنش کافی بدون جواب؛ mode=with_reply برای واکنش همراه "
+        "با پاسخ متنی/رسانه‌ای یا پیام‌های send_chat_messages. "
+        "اگر سؤال یا درخواست مهم است به‌جای only پاسخ بده. "
+        "لیست emoji شامل تمام ایموجی‌های استاندارد Bot API است؛ "
+        "💙 درخواست ویژهٔ نامعتبر است و باید محدودیت صادقانه توضیح داده شود. "
+        "مقصد و شناسهٔ پیام قابل جعل توسط مدل نیست."
     ),
     parameters={"type": "object", "properties": {
-        "emoji": {"type": "string", "enum": ["❤️", "👍", "🥰", "👏", "😁", "🎉", "🤩", "🙏", "🤣", "🤝", "👀", "🔥"]},
+        "emoji": {"type": "string", "enum": sorted(SUGGESTED_REACTIONS | UNSUPPORTED_REQUESTED_REACTIONS)},
         "target": {"type": "string", "enum": ["current", "replied"]},
+        "mode": {"type": "string", "enum": ["only", "with_reply"]},
     }, "required": ["emoji", "target"], "additionalProperties": False},
     handler=_react_to_chat_message, category="chat", emoji="❤️",
 ))

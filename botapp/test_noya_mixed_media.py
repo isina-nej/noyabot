@@ -209,13 +209,13 @@ class AgentMultimediaTests(SimpleTestCase):
         scope = {
             "bot": msg.bot, "chat": msg.chat, "chat_id": msg.chat.id,
             "chat_type": "supergroup", "current_message_id": msg.message_id,
-            "reply_to_message_id": 42,
+            "reply_to_message_id": 42, "reaction_only_allowed": True,
         }
         (answer, meta), _ = _run_agent(
             "react_to_chat_message", {"emoji": "❤️", "target": "current"},
             scope=scope,
         )
-        self.assertEqual(meta["queued_reaction"], {"emoji": "❤️", "target": "current"})
+        self.assertEqual(meta["queued_reaction"], {"emoji": "❤️", "target": "current", "mode": "only"})
         self.assertEqual(answer, "")
         done = async_to_sync(_deliver_noya_requested_reaction)(msg, meta)
         self.assertTrue(done)
