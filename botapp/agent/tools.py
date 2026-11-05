@@ -186,6 +186,8 @@ async def _send_chat_messages(messages: list[dict] | None = None) -> str:
     outbox = _CHAT_OUTBOX.get()
     if outbox is None:
         return "Error: ارسال پیام خارج از یک گفت‌وگوی فعال مجاز نیست."
+    if _MEDIA_SEQUENCE.get():
+        return "Error: دسته چندرسانه‌ای از قبل آماده شده؛ پیام‌ها را تکراری نساز."
     if not isinstance(messages, list) or not messages:
         return "Error: حداقل یک پیام معتبر لازم است."
     if len(outbox) + len(messages) > MAX_CHAT_OUTBOX_MESSAGES:
