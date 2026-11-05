@@ -101,11 +101,35 @@ def _recover_from_bot_inbox(
     ).first()
     if old is None or (old.message_date and old.message_date < cutoff):
         return existing
-    if existing is None and MessageSnapshot.objects.filter(
-        chat_id=scope["chat_id"], message_id=mid,
-    ).exists():
-        # A deleted record or a different topic is not repairable by an inbox.
-        return None
+    if existing is None:
+        candidate = MessageSnapshot.objects.filter(
+            chat_id=scope["chat_id"], message_id=mid,
+        ).first()
+        if candidate is not None:
+            # Repair only the verified mismatch seen on production: a photo
+            # in an ordinary group is assigned its own message_id as a
+            # spurious thread, while the SAME bot's inbox recorded topic 0.
+            # In a real forum this shape can be the genuine topic opener:
+            # never move those messages across actual forum topics.
+            safe_legacy_nonforum = (
+                int(scope["thread_id"]) == 0
+                and int(old.thread_id or 0) == 0
+                and int(candidate.thread_id or 0) == mid
+                and getattr(scope.get("chat"), "is_forum", None) is not True
+                and candidate.deleted_by_bot_at is None
+                and candidate.archived_at >= cutoff
+                and candidate.content_type == old.content_type
+                and (not candidate.sender_user_id or not old.sender_user_id
+                     or int(candidate.sender_user_id) == int(old.sender_user_id))
+            )
+            if not safe_legacy_nonforum:
+                # Never revive deleted, expired or genuinely separate topics.
+                return None
+            candidate.thread_id = 0
+            candidate.save(update_fields=["thread_id"])
+            existing = candidate
+            logger.info("[NOYA-ARCHIVE-REPAIR] restored nonforum chat=%s message_id=%s from same-bot inbox",
+                        scope["chat_id"], mid)
 
     metadata = dict(existing.metadata or {}) if existing else {}
     if not metadata.get("telegram_link"):
