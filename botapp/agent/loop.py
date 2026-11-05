@@ -25,7 +25,7 @@ from botapp.observability.instrumentation import (
 
 from .registry import registry
 from .responses import sanitize_outgoing_text
-from .tools import isolated_media_results, pop_media_result, pop_chat_outbox
+from .tools import isolated_media_results, pop_media_result, pop_chat_outbox, pop_media_sequence, pop_reaction_request
 
 logger = logging.getLogger(__name__)
 
@@ -423,6 +423,12 @@ async def run_agent_loop(
                 queued = pop_chat_outbox()
                 if queued:
                     metadata["queued_chat_messages"] = queued
+                media_sequence = pop_media_sequence()
+                if media_sequence:
+                    metadata["queued_media_sequence"] = media_sequence
+                reaction = pop_reaction_request()
+                if reaction:
+                    metadata["queued_reaction"] = reaction
                 return final_text, metadata
 
             # ── Execute tool calls (parallel like Hermes) ──

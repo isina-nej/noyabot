@@ -296,6 +296,8 @@ async def call_noya_api(
             metadata.get("generated_image_b64")
             or metadata.get("generated_tts_audio")
             or metadata.get("queued_chat_messages")
+            or metadata.get("queued_media_sequence")
+            or metadata.get("queued_reaction")
         )
         return (reply if (metadata.get("reaction_emoji") or metadata.get("no_reply") or has_media)
                 else (reply or "پاسخی از هوش مصنوعی دریافت نشد.")), metadata
