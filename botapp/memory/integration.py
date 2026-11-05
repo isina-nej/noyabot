@@ -353,7 +353,11 @@ async def run_ai_with_memory(
         "chat_type": str(getattr(chat, "type", "") or ""),
         "thread_id": int(getattr(message, "message_thread_id", 0) or 0),
         "current_message_id": int(getattr(message, "message_id", 0) or 0),
-        "reply_to_message_id": int(getattr(reply, "message_id", 0) or 0),
+        "reply_to_message_id": (
+            int(getattr(reply, "message_id", 0) or 0)
+            if reply is not None and getattr(getattr(reply, "chat", None), "id", None)
+            == getattr(chat, "id", None) else 0
+        ),
     }
     kwargs = {
         "telegram_context": telegram_context,
