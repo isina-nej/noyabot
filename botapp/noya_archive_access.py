@@ -100,9 +100,10 @@ def _resolve_id(scope: dict, reference: str) -> int | None:
         return int(ref)
     try:
         url = urlparse(ref)
+        if (url.scheme != "https" or url.hostname not in {"t.me", "www.t.me"}
+                or url.port is not None or url.username or url.password):
+            return None
     except ValueError:
-        return None
-    if url.scheme != "https" or url.hostname not in {"t.me", "www.t.me"} or url.port is not None or url.username or url.password:
         return None
     if url.query or url.fragment:
         return None
