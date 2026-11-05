@@ -33,7 +33,9 @@ class NoyaObservedIdentity(models.Model):
     username = models.CharField(max_length=64, blank=True, default="")
     first_name = models.CharField(max_length=128, blank=True, default="")
     last_name = models.CharField(max_length=128, blank=True, default="")
-    nickname = models.CharField(max_length=64, blank=True, default="")
+    nickname = models.CharField(max_length=64, blank=True, default="")  # self-declared
+    assigned_nickname = models.CharField(max_length=64, blank=True, default="")  # group label, not verified identity
+    assigned_nickname_by = models.BigIntegerField(null=True, blank=True)
     updated_at = models.DateTimeField(auto_now=True)
 
     class Meta:
