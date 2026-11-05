@@ -554,6 +554,24 @@ registry.register(Tool(
     handler=inspect_group_image, category="chat", emoji="🖼️",
 ))
 
+from botapp.noya_archive_visual import inspect_group_media
+
+registry.register(Tool(
+    name="inspect_group_media",
+    description=(
+        "دیدن و خواندن نوشته‌های GIF، استیکر ثابت/متحرک، ویدیومسیج دایره‌ای "
+        "و ویدیوهای ثبت‌شده در همین گروه/موضوع با فایل واقعی همان ربات. "
+        "تا ۳ فریم نمونه را با مدل Vision می‌خواند و برای ویدیو‌مسج، گفتار را "
+        "در صورت وجود با STT به متن تبدیل می‌کند. لینک یا شماره پیام را بده؛ "
+        "برای عکس عادی همان inspect_group_image هم مناسب است. "
+        "اگر فریم، صدا یا OCR در دسترس نیست، متن را حدس نزن."
+    ),
+    parameters={"type": "object", "properties": {
+        "reference": {"type": "string", "minLength": 1, "maxLength": 200},
+    }, "required": ["reference"], "additionalProperties": False},
+    handler=inspect_group_media, category="chat", emoji="🎞️",
+))
+
 registry.register(Tool(
     name="find_group_nickname",
     description=(

@@ -78,6 +78,13 @@ def _summarize(row: MessageSnapshot, scope: dict) -> dict:
         "image_available": bool(
             (meta.get("media_by_bot") or {}).get(str(scope.get("bot_id", "")))
         ),
+        "media_available": bool(
+            (meta.get("media_by_bot") or {}).get(str(scope.get("bot_id", "")))
+        ),
+        "media_kind": str(
+            ((meta.get("media_by_bot") or {}).get(str(scope.get("bot_id", ""))) or {})
+            .get("kind") or ""
+        )[:32],
     }
 
 
@@ -136,10 +143,16 @@ def _recover_from_bot_inbox(
         link = telegram_message_link(scope.get("chat"), mid)
         if link:
             metadata["telegram_link"] = link
-    if old.content_type == "photo" and old.media_file_id:
+    # The opt-in same-bot inbox has retained media file IDs even before the
+    # main archive supported videos, stickers and GIFs. Treat MIME/kind as
+    # hints only; the decoder still checks file bytes and hard size limits.
+    recoverable = {
+        "photo", "sticker", "animation", "video_note", "video",
+    }
+    if old.content_type in recoverable and old.media_file_id:
         per_bot = dict(metadata.get("media_by_bot") or {})
         per_bot.setdefault(str(bot_id), {
-            "kind": "photo", "file_id": old.media_file_id[:512],
+            "kind": old.content_type, "file_id": old.media_file_id[:512],
         })
         metadata["media_by_bot"] = per_bot
 

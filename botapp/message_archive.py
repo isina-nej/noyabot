@@ -39,18 +39,56 @@ def telegram_message_link(chat, message_id: int) -> str:
     return ""
 
 
-def _media_file_id(message) -> tuple[str, str]:
-    """Return only Telegram file_id, not media bytes or a temporary file URL."""
+def _media_reference(message) -> dict:
+    """Retain only a bot-specific Telegram file reference, never raw bytes.
+
+    Supported types include moving sticker/GIF/video-note that we can later
+    decode into bounded samples for OCR or transcript. Flags are captured
+    from the observed Telegram message, not supplied by the LLM.
+    """
     photo = getattr(message, "photo", None) or []
     if photo:
         item = max(photo, key=lambda p: int(getattr(p, "file_size", 0) or 0)
-                   or (int(getattr(p, "width", 0) or 0) * int(getattr(p, "height", 0) or 0)))
-        return "photo", str(getattr(item, "file_id", "") or "")[:512]
-    doc = getattr(message, "document", None)
-    if doc and str(getattr(doc, "mime_type", "") or "").startswith("image/"):
-        return "document_image", str(getattr(doc, "file_id", "") or "")[:512]
-    return "", ""
+                   or (int(getattr(p, "width", 0) or 0) *
+                       int(getattr(p, "height", 0) or 0)))
+        return {"kind": "photo", "file_id": str(getattr(item, "file_id", "") or "")[:512]}
 
+    for attr in ("sticker", "animation", "video_note", "video"):
+        obj = getattr(message, attr, None)
+        if obj is None:
+            continue
+        result = {"kind": attr, "file_id": str(getattr(obj, "file_id", "") or "")[:512]}
+        if attr == "sticker":
+            result["is_animated"] = bool(getattr(obj, "is_animated", False))
+            result["is_video"] = bool(getattr(obj, "is_video", False))
+        elif attr == "animation":
+            result["mime_type"] = str(getattr(obj, "mime_type", "") or "")[:70]
+            result["file_name"] = str(getattr(obj, "file_name", "") or "")[:80]
+        return result
+
+    doc = getattr(message, "document", None)
+    if doc is not None:
+        mime = str(getattr(doc, "mime_type", "") or "").lower()
+        filename = str(getattr(doc, "file_name", "") or "").lower()
+        if mime.startswith("image/") or filename.endswith(
+            (".gif", ".webp", ".png", ".jpg", ".jpeg", ".apng")
+        ):
+            kind = "document_animation" if (
+                mime == "image/gif" or filename.endswith((".gif", ".apng"))
+            ) else "document_image"
+            return {
+                "kind": kind,
+                "file_id": str(getattr(doc, "file_id", "") or "")[:512],
+                "mime_type": mime[:70],
+                "file_name": filename[:80],
+            }
+    return {}
+
+
+def _media_file_id(message) -> tuple[str, str]:
+    """Legacy photo helper retained for existing integrations."""
+    info = _media_reference(message)
+    return info.get("kind", ""), info.get("file_id", "")
 
 
 def archive_enabled() -> bool:
@@ -58,7 +96,7 @@ def archive_enabled() -> bool:
 
 
 def _content_type(message) -> str:
-    for attr in ("text", "photo", "video", "document", "audio", "voice", "sticker", "animation"):
+    for attr in ("text", "photo", "video_note", "video", "document", "audio", "voice", "sticker", "animation"):
         if getattr(message, attr, None):
             return "text" if attr == "text" else attr
     if getattr(message, "caption", None):
@@ -93,7 +131,7 @@ def snapshot_payload(message, bot_id: int = 0) -> dict:
     sender_chat = getattr(message, "sender_chat", None)
     reply = getattr(message, "reply_to_message", None)
     link = telegram_message_link(getattr(message, "chat", None), getattr(message, "message_id", 0))
-    kind, file_id = _media_file_id(message)
+    reference = _media_reference(message)
     metadata = {}
     if user:
         metadata["identity"] = {
@@ -102,8 +140,8 @@ def snapshot_payload(message, bot_id: int = 0) -> dict:
         }
     if link:
         metadata["telegram_link"] = link
-    if bot_id and file_id:
-        metadata["media_by_bot"] = {str(int(bot_id)): {"file_id": file_id, "kind": kind}}
+    if bot_id and reference.get("file_id"):
+        metadata["media_by_bot"] = {str(int(bot_id)): reference}
     return {
         "thread_id": scoped_message_thread_id(message),
         "sender_user_id": int(user.id) if user else None,
