@@ -195,6 +195,68 @@ async def find_group_nickname(name: str = "") -> str:
     return json.dumps({"matches": rows}, ensure_ascii=False)
 
 
+def _group_records_sync(scope: dict, category: str, limit: int) -> list[dict]:
+    from django.db.models import Q
+    from botapp.models import ChatDailyActivity, GroupActionLog
+
+    if category == "nicknames":
+        q = NoyaObservedIdentity.objects.filter(chat_id=scope["chat_id"]).filter(
+            Q(nickname__gt="") | Q(assigned_nickname__gt="")
+        ).order_by("-updated_at")[:limit]
+        return [{
+            "user_id": row.user_id,
+            "username": row.username,
+            "self_nickname": row.nickname,
+            "group_assigned_nickname": row.assigned_nickname,
+        } for row in q]
+    if category == "activity":
+        q = ChatDailyActivity.objects.filter(chat_id=scope["chat_id"]).order_by("-day")[:limit]
+        return [{
+            "day": row.day.isoformat(),
+            "messages": row.message_count,
+            "media": row.media_count,
+            "unique_senders": row.unique_sender_count,
+        } for row in q]
+    if category == "moderation_logs":
+        q = GroupActionLog.objects.filter(group__chat_id=scope["chat_id"]).order_by("-timestamp")[:limit]
+        return [{
+            "action": row.action,
+            "by_admin_user_id": row.admin_user_id,
+            "old": row.old_value,
+            "new": row.new_value,
+            "at": row.timestamp.isoformat(),
+        } for row in q]
+    return []
+
+
+async def read_group_records(category: str = "activity", limit: int = 8) -> str:
+    """Read only allowlisted records, with Telegram admin proof for audit logs."""
+    scope = _budget()
+    if scope is None:
+        return "Error: دسترسی خواندنی به داده‌های این گروه مجاز نیست."
+    if category not in {"nicknames", "activity", "moderation_logs"}:
+        return "Error: نوع داده مجاز نیست."
+    try:
+        count = min(max(int(limit), 1), 20)
+    except (TypeError, ValueError):
+        return "Error: تعداد نامعتبر است."
+    if category == "moderation_logs":
+        bot = scope.get("bot")
+        actor = int(scope.get("speaker_user_id") or 0)
+        if not bot or actor <= 0:
+            return "Error: گزارش مدیریت فقط برای مدیران تأییدشده گروه است."
+        try:
+            member = await bot.get_chat_member(chat_id=scope["chat_id"], user_id=actor)
+            if str(getattr(member, "status", "")) not in {"administrator", "creator"}:
+                return "Error: گزارش مدیریت فقط برای مدیران تأییدشده گروه است."
+        except Exception:
+            return "Error: بررسی دسترسی مدیر گروه ناموفق بود."
+    rows = await sync_to_async(_group_records_sync, thread_sensitive=True)(
+        scope, category, count,
+    )
+    return json.dumps({"category": category, "records": rows}, ensure_ascii=False)
+
+
 def _save_image_text(scope: dict, message_id: int, text: str) -> None:
     row = _get_snapshot(scope, message_id)
     if row is None:
