@@ -24,14 +24,14 @@ _VALID_ACTIONS = frozenset({"typing", "record_voice", "upload_voice", "upload_ph
 class NoyaChatAction:
     """One status sender owned by one bot/chat/topic request."""
 
-    def __init__(self, message, *, action: str = "typing", interval: float = _REFRESH_SECONDS):
+    def __init__(self, message, *, action: str = "typing", interval: float | None = None):
         if action not in _VALID_ACTIONS:
             raise ValueError("Unsupported Telegram chat action")
         self.bot = getattr(message, "bot", None)
         self.chat_id = getattr(message.chat, "id", None)
         self.message_thread_id = getattr(message, "message_thread_id", None)
         self.action = action
-        self.interval = interval
+        self.interval = _REFRESH_SECONDS if interval is None else interval
         self._task: asyncio.Task | None = None
 
     async def _send(self):
