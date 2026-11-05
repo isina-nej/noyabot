@@ -274,11 +274,23 @@ async def prepare_media_for_noya(bot, message, *, include_reply: bool = True) ->
         else:
             if kind == "video":
                 try:
-                    if os.getenv("NOYA_VIDEO_SAMPLE_FRAMES", "false").lower() in {"1", "true", "yes", "on"}:
+                    # Circular video notes are short animations: sample
+                    # beginning/middle/end of their first six seconds instead
+                    # of relying on one thumbnail. Text and gestures can
+                    # change across frames. Other videos keep existing opt-in.
+                    is_video_note = (
+                        obj is getattr(message, "video_note", None)
+                        or obj is getattr(getattr(message, "reply_to_message", None), "video_note", None)
+                    )
+                    if is_video_note:
+                        from botapp.animated_media import sample_animation_frames
+                        frames = [data for _mime, data in
+                                  await sample_animation_frames(raw, kind="video")]
+                    elif os.getenv("NOYA_VIDEO_SAMPLE_FRAMES", "false").lower() in {"1", "true", "yes", "on"}:
                         frames = await _ffmpeg_video_frames(raw)
-                        if not frames:
-                            frames = [await _ffmpeg(raw, frame=True)]
                     else:
+                        frames = []
+                    if not frames:
                         frames = [await _ffmpeg(raw, frame=True)]
                     for index, frame in enumerate(frames[:MAX_IMAGES]):
                         normalized_mime, normalized = normalize_image_bytes(frame)
