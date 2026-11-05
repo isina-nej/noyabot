@@ -25,7 +25,7 @@ from botapp.observability.instrumentation import (
 
 from .registry import registry
 from .responses import sanitize_outgoing_text
-from .tools import isolated_media_results, pop_media_result
+from .tools import isolated_media_results, pop_media_result, pop_chat_outbox
 
 logger = logging.getLogger(__name__)
 
@@ -419,6 +419,9 @@ async def run_agent_loop(
                         )
                 if used_tools:
                     metadata["tools_used"] = used_tools
+                queued = pop_chat_outbox()
+                if queued:
+                    metadata["queued_chat_messages"] = queued
                 return final_text, metadata
 
             # ── Execute tool calls (parallel like Hermes) ──

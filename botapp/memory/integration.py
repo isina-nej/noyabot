@@ -366,8 +366,18 @@ async def run_ai_with_memory(
         answer, agent_metadata = answer[0], answer[1] if len(answer) > 1 else {}
     ai_request_ms = (time.perf_counter() - t1) * 1000
 
+    # The agent can assemble several outgoing messages instead of a single
+    # final answer. Preserve their visible text in authorized dialogue memory
+    # rather than recording the model's internal "done" acknowledgement.
+    queued = agent_metadata.get("queued_chat_messages") or []
+    visible_answer = (
+        "\n".join(item["text"] for item in queued if isinstance(item, dict)
+                  and isinstance(item.get("text"), str))
+        if isinstance(queued, list) else ""
+    )
+    memory_answer = visible_answer or answer
     ingestion_ms = 0
-    if _successful_answer(answer):
+    if _successful_answer(memory_answer):
         t2 = time.perf_counter()
         await record_processed_message(message)
         if conversation is not None and speaker_user_id is not None:
@@ -378,7 +388,7 @@ async def run_ai_with_memory(
                     raw = "[رسانه: ویس، عکس، ویدیو یا استیکر بدون کپشن]"
                 await sync_to_async(remember_dialogue, thread_sensitive=True)(
                     conversation, speaker_user_id, int(getattr(message, "message_id", 0) or 0),
-                    raw, str(answer),
+                    raw, str(memory_answer),
                 )
             except Exception as exc:
                 logger.warning("Dialogue write failed: %s", type(exc).__name__)
