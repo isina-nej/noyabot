@@ -328,12 +328,13 @@ class ArchiveMiddleware(BaseMiddleware):
                     # later re-download with this same bot.
                     reply = getattr(event, "reply_to_message", None)
                     reply_chat = getattr(reply, "chat", None)
+                    reply_topic = getattr(reply, "message_thread_id", None)
+                    current_topic = int(getattr(event, "message_thread_id", 0) or 0)
                     if (reply is not None and reply_chat is not None
                             and int(reply_chat.id) == int(event.chat.id)
-                            and int(getattr(reply, "message_thread_id", 0) or 0)
-                            == int(getattr(event, "message_thread_id", 0) or 0)):
+                            and (not reply_topic or int(reply_topic) == current_topic)):
                         await sync_to_async(message_archive.archive_message, thread_sensitive=True)(
-                            reply, bot_id=bot_id,
+                            reply, bot_id=bot_id, thread_id_override=current_topic,
                         )
                 except Exception:  # archival must never break message handling
                     logger.debug("message archival failed", exc_info=True)
