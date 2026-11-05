@@ -22,6 +22,13 @@ _MEDIA_RESULTS: ContextVar[dict[str, Any] | None] = ContextVar(
 _INPUT_IMAGES: ContextVar[list[dict] | None] = ContextVar(
     "noya_request_input_images", default=None
 )
+# Per-invocation text outbox: only runbot can deliver to the authorized
+# incoming Telegram chat, never to a chat ID suggested by the model.
+_CHAT_OUTBOX: ContextVar[list[dict[str, str]] | None] = ContextVar(
+    "noya_request_chat_outbox", default=None
+)
+MAX_CHAT_OUTBOX_MESSAGES = 6
+MAX_CHAT_MESSAGE_CHARS = 2000
 
 
 def isolated_media_results(async_func: Callable):
@@ -33,9 +40,11 @@ def isolated_media_results(async_func: Callable):
         input_token = _INPUT_IMAGES.set(
             images[:3] if isinstance(images, list) else []
         )
+        outbox_token = _CHAT_OUTBOX.set([])
         try:
             return await async_func(*args, **kwargs)
         finally:
+            _CHAT_OUTBOX.reset(outbox_token)
             _INPUT_IMAGES.reset(input_token)
             _MEDIA_RESULTS.reset(token)
     return wrapper
@@ -50,6 +59,49 @@ def _store_media_result(kind: str, payload: Any) -> None:
 def pop_media_result(kind: str):
     results = _MEDIA_RESULTS.get()
     return results.pop(kind, None) if results is not None else None
+
+
+def pop_chat_outbox() -> list[dict[str, str]]:
+    """Return and clear messages from this completed model invocation."""
+    outbox = _CHAT_OUTBOX.get()
+    if outbox is None:
+        return []
+    result = list(outbox)
+    outbox.clear()
+    return result
+
+
+async def _send_chat_messages(messages: list[dict] | None = None) -> str:
+    """Stage a bounded sequence; Telegram is contacted only after AI finishes.
+
+    Deliberately no chat_id/message_id inputs: the authenticated Telegram
+    update, not model-supplied text, determines the destination and replies.
+    """
+    outbox = _CHAT_OUTBOX.get()
+    if outbox is None:
+        return "Error: ارسال پیام خارج از یک گفت‌وگوی فعال مجاز نیست."
+    if not isinstance(messages, list) or not messages:
+        return "Error: حداقل یک پیام معتبر لازم است."
+    if len(outbox) + len(messages) > MAX_CHAT_OUTBOX_MESSAGES:
+        return f"Error: سقف {MAX_CHAT_OUTBOX_MESSAGES} پیام در هر درخواست پر شده است."
+    prepared: list[dict[str, str]] = []
+    for item in messages:
+        if not isinstance(item, dict):
+            return "Error: ساختار پیام معتبر نیست."
+        text = item.get("text")
+        reply_to = item.get("reply_to", "current")
+        if (not isinstance(text, str) or not text.strip()
+                or len(text) > MAX_CHAT_MESSAGE_CHARS
+                or reply_to not in ("current", "previous", "none")):
+            return "Error: متن یا حالت ریپلای پیام معتبر نیست."
+        # Do not interpret arbitrary HTML/Markdown in the Telegram sender.
+        prepared.append({"text": text.strip(), "reply_to": reply_to})
+    outbox.extend(prepared)
+    return (
+        f"{len(prepared)} پیام برای ارسال پس از پایان پاسخ آماده شد "
+        f"(مجموع {len(outbox)} از {MAX_CHAT_OUTBOX_MESSAGES}). "
+        "پیام‌ها بعد از پایان موفق Agent ارسال می‌شوند؛ حالا پاسخ نهایی را کوتاه تمام کن."
+    )
 
 # ── URL helpers ──
 _URL_RE = re.compile(r'https?://[^\s<>"\']+')
@@ -279,5 +331,41 @@ registry.register(Tool(
         "additionalProperties": False,
     },
     handler=_edit_image, emoji="✏️",
+    category="chat",
+))
+
+registry.register(Tool(
+    name="send_chat_messages",
+    description=(
+        "وقتی کاربر گفتگو را در چند پیام جدا، با/بی‌ریپلای می‌خواهد، "
+        "آرایه پیام‌ها را برای ارسال در همان چت جاری آماده کن. "
+        "reply_to=current ریپلای به پیام کاربر، previous ریپلای به آخرین پیام "
+        "فرستاده‌شده از همین دسته، none پیام مستقل. "
+        "محدود به ۶ پیام در هر درخواست، بدون ارسال به چت دیگر، "
+        "بدون لوپ بی‌نهایت. بعد از فراخوانی متن پایانی تکراری نساز."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "messages": {
+                "type": "array",
+                "minItems": 1,
+                "maxItems": MAX_CHAT_OUTBOX_MESSAGES,
+                "items": {
+                    "type": "object",
+                    "properties": {
+                        "text": {"type": "string", "minLength": 1, "maxLength": MAX_CHAT_MESSAGE_CHARS},
+                        "reply_to": {"type": "string", "enum": ["current", "previous", "none"]},
+                    },
+                    "required": ["text", "reply_to"],
+                    "additionalProperties": False,
+                },
+            },
+        },
+        "required": ["messages"],
+        "additionalProperties": False,
+    },
+    handler=_send_chat_messages,
+    emoji="💬",
     category="chat",
 ))
