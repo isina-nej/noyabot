@@ -82,6 +82,7 @@ from botapp.noya_bot_chat import (
     is_self_bot_message,
 )
 from botapp.noya_edits import coordinator as noya_edit_coordinator
+from botapp.noya_chat_actions import with_chat_action, set_active_chat_action
 from botapp.noya_address import is_addressing_noya
 from botapp.telegram_media import collect_noya_images
 from botapp.telegram_rich import extract_message_body
@@ -1294,6 +1295,7 @@ async def nickname_clear_command(message: Message):
 
 
 @router.message(Command("prompt"))
+@with_chat_action("typing")
 async def prompt(message: Message, command: CommandObject):
     chat = message.chat
 
@@ -1303,7 +1305,6 @@ async def prompt(message: Message, command: CommandObject):
         return
 
     if chat.type == ChatType.PRIVATE:
-        await message.bot.send_chat_action(chat_id=chat.id, action="typing")
         answer, _meta = await run_ai_with_memory(
             message,
             question,
@@ -1324,7 +1325,6 @@ async def prompt(message: Message, command: CommandObject):
         )
         return
 
-    await message.bot.send_chat_action(chat_id=chat.id, action="typing")
     answer, _meta = await run_ai_with_memory(
         message,
         question,
@@ -1387,13 +1387,12 @@ async def _await_noya_operation(message: Message, operation):
         await asyncio.gather(notice, return_exceptions=True)
 
 
+@with_chat_action("upload_photo")
 async def _handle_noya_image_generation(message: Message, prompt_text: str, *, direct_prompt: bool = False):
     prompt_clean = (prompt_text or "").strip()
     if not prompt_clean:
         await message.reply("لطفاً توصیف عکسی که می‌خوای رو بگو؛ مثلاً: یک گربه سفید روی مبل")
         return
-    if message.bot:
-        await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
     try:
         operation = (generate_noya_image(prompt_clean, translate=False)
                      if direct_prompt else generate_noya_image(prompt_clean))
@@ -1413,10 +1412,9 @@ async def _handle_noya_image_generation(message: Message, prompt_text: str, *, d
         await message.reply("عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
 
 
+@with_chat_action("upload_photo")
 async def _handle_noya_image_edit(message: Message, instruction: str, image_data: bytes, image_mime: str = "image/jpeg"):
     """Edit image with a bounded wait and optional one-minute notice."""
-    if message.bot:
-        await message.bot.send_chat_action(chat_id=message.chat.id, action="upload_photo")
     try:
         edited_bytes = await _await_noya_operation(
             message, edit_noya_image(instruction, image_data, image_mime),
@@ -1470,14 +1468,13 @@ def extract_voice_text(text: str) -> str | None:
     return None
 
 
+@with_chat_action("record_voice")
 async def _handle_noya_tts(message: Message, text: str, *, as_noya: bool = True) -> None:
     """Generate voice and optionally notify once if it takes over a minute."""
     text_clean = (text or "").strip()
     if not text_clean:
         await message.reply("لطفاً متنی رو که می‌خوای با صدا بگم بنویس.")
         return
-    if message.bot:
-        await message.bot.send_chat_action(chat_id=message.chat.id, action="record_voice")
     try:
         audio_bytes = await _await_noya_operation(
             message, generate_noya_tts(text_clean, as_noya=as_noya),
@@ -1491,6 +1488,7 @@ async def _handle_noya_tts(message: Message, text: str, *, as_noya: bool = True)
     try:
         voice_file = BufferedInputFile(audio_bytes, filename="noya_voice.mp3")
         caption = f"🎙️ <blockquote>{escape(text_clean[:120])}</blockquote>"
+        await set_active_chat_action("upload_voice")
         await message.reply_voice(voice=voice_file, caption=caption, parse_mode="HTML")
     except TelegramAPIError:
         logger.exception("Failed sending TTS voice to chat=%s", message.chat.id)
@@ -1974,6 +1972,7 @@ def _noya_question_from_text(text: str, bot_username: str = "") -> str | None:
     return None
 
 
+@with_chat_action("typing")
 async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool) -> None:
     bot_username = ""
     self_bot_id = None
@@ -2156,7 +2155,6 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
                 return
         except Exception:
             logger.info("jev_media_fail_open chat=%s", message.chat.id)
-    await message.bot.send_chat_action(chat_id=message.chat.id, action="typing")
     # The same five-minute boundary and 60-second notice apply to chat,
     # image generation, editing and voice synthesis.
     try:
@@ -2198,13 +2196,16 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     if agent_metadata.get("generated_image_b64"):
         import base64
         img_bytes = base64.b64decode(agent_metadata["generated_image_b64"])
+        await set_active_chat_action("upload_photo")
         await message.reply_photo(BufferedInputFile(img_bytes, filename="noya_image.png"), caption=answer or "")
     elif agent_metadata.get("generated_tts_audio"):
         audio_bytes = agent_metadata["generated_tts_audio"]
         voice_file = BufferedInputFile(audio_bytes, filename="noya_voice.mp3")
+        await set_active_chat_action("upload_voice")
         await message.reply_voice(voice=voice_file)
         clean_answer = (answer or "").replace("صدا آماده شد.", "").strip()
         if clean_answer:
+            await set_active_chat_action("typing")
             await reply_noya_answer(message, clean_answer)
     else:
         # --- Legacy ACTION dispatch (fallback for non-agent mode) ---
@@ -2433,6 +2434,7 @@ async def _reply_noya_transcript(message: Message, transcript: str, warnings: li
 
 
 @router.message(Command("transcribe"))
+@with_chat_action("typing")
 async def transcribe_command(message: Message, bot: Bot):
     """Reply to a voice/audio/video with /transcribe; no LLM required."""
     from botapp.media_intake import prepare_media_for_noya
