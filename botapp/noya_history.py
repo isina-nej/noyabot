@@ -74,7 +74,8 @@ def archived_context_for_message(message, query: str) -> str:
 
     chat_id = int(getattr(chat, "id", 0) or 0)
     message_id = int(getattr(message, "message_id", 0) or 0)
-    thread_id = int(getattr(message, "message_thread_id", None) or 0)
+    from botapp.message_archive import scoped_message_thread_id
+    thread_id = scoped_message_thread_id(message)
     if not chat_id or not message_id:
         return ""
 

@@ -105,11 +105,11 @@ def _message_metadata(message, *, text: str | None = None) -> str:
     replied = getattr(message, "reply_to_message", None)
     date = getattr(message, "date", None)
     timestamp = date.isoformat() if hasattr(date, "isoformat") else (str(date) if date else None)
-    from botapp.message_archive import telegram_message_link
+    from botapp.message_archive import telegram_message_link, scoped_message_thread_id
     fields = {
         "message_link": telegram_message_link(chat, getattr(message, "message_id", 0)),
         "chat_id": int(getattr(chat, "id", 0) or 0),
-        "thread_id": int(getattr(message, "message_thread_id", None) or 0),
+        "thread_id": scoped_message_thread_id(message),
         "user_id": int(getattr(user, "id", 0) or 0) or None,
         "message_id": int(getattr(message, "message_id", 0) or 0) or None,
         "reply_to_message_id": int(getattr(replied, "message_id", 0) or 0) or None,

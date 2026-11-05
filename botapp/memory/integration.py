@@ -337,6 +337,7 @@ async def run_ai_with_memory(
     # Match provider kwargs up front. Never retry an AI request merely because
     # provider internals raised TypeError after performing a billable action.
     from botapp.noya_social_roles import trusted_social_context
+    from botapp.message_archive import scoped_message_thread_id
     from botapp.noya_reactions import reaction_eligible, explicit_reaction_intent
     from botapp.noya_silence import silence_eligible
     reaction_low_stakes = reaction_eligible(message)
@@ -354,7 +355,7 @@ async def run_ai_with_memory(
         "chat": chat,
         "chat_id": int(getattr(chat, "id", 0) or 0),
         "chat_type": str(getattr(chat, "type", "") or ""),
-        "thread_id": int(getattr(message, "message_thread_id", 0) or 0),
+        "thread_id": scoped_message_thread_id(message),
         "current_message_id": int(getattr(message, "message_id", 0) or 0),
         "reply_to_message_id": (
             int(getattr(reply, "message_id", 0) or 0)

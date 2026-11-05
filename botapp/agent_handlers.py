@@ -331,11 +331,14 @@ class ArchiveMiddleware(BaseMiddleware):
                     # later re-download with this same bot.
                     reply = getattr(event, "reply_to_message", None)
                     reply_chat = getattr(reply, "chat", None)
-                    reply_topic = getattr(reply, "message_thread_id", None)
-                    current_topic = int(getattr(event, "message_thread_id", 0) or 0)
+                    current_topic = message_archive.scoped_message_thread_id(event)
+                    reply_topic = (
+                        message_archive.scoped_message_thread_id(reply)
+                        if reply is not None else 0
+                    )
                     if (reply is not None and reply_chat is not None
                             and int(reply_chat.id) == int(event.chat.id)
-                            and (not reply_topic or int(reply_topic) == current_topic)):
+                            and (not reply_topic or reply_topic == current_topic)):
                         await sync_to_async(message_archive.archive_message, thread_sensitive=True)(
                             reply, bot_id=bot_id, thread_id_override=current_topic,
                         )
