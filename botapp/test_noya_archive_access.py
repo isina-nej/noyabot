@@ -224,6 +224,48 @@ class ArchiveLinksAndToolsTests(TestCase):
         self.assertIn("Error", _query(scope, search_group_messages))
 
     @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_group_record_lists_are_read_only_and_group_scoped(self):
+        from botapp.models import ChatDailyActivity, GroupSettings, GroupActionLog
+        from botapp.noya_archive_access import read_group_records
+        today = timezone.localdate()
+        ChatDailyActivity.objects.create(
+            chat_id=CHAT, day=today, message_count=15,
+            media_count=2, unique_sender_count=5,
+        )
+        ChatDailyActivity.objects.create(
+            chat_id=OTHER, day=today, message_count=999,
+            media_count=98, unique_sender_count=300,
+        )
+        NoyaObservedIdentity.objects.create(
+            chat_id=CHAT, user_id=342,
+            assigned_nickname="حسون",
+        )
+        group = GroupSettings.objects.create(chat_id=CHAT, chat_title="test group")
+        GroupActionLog.objects.create(
+            group=group, admin_user_id=42, admin_name="S",
+            action="lock", old_value=False, new_value=True,
+        )
+        records = json.loads(_query(_scope(), read_group_records, "activity"))
+        self.assertEqual(records["records"][0]["messages"], 15)
+        self.assertNotIn("999", json.dumps(records))
+        aliases = json.loads(_query(_scope(), read_group_records, "nicknames"))
+        self.assertEqual(aliases["records"][0]["group_assigned_nickname"], "حسون")
+        self.assertIn("Error", _query(_scope(), read_group_records, "moderation_logs"))
+
+        member_bot = SimpleNamespace(
+            get_chat_member=AsyncMock(return_value=SimpleNamespace(status="member")),
+        )
+        denied = _scope(bot=member_bot)
+        denied["speaker_user_id"] = 42
+        self.assertIn("Error", _query(denied, read_group_records, "moderation_logs"))
+        member_bot.get_chat_member.return_value = SimpleNamespace(status="administrator")
+        allowed = _scope(bot=member_bot)
+        allowed["speaker_user_id"] = 42
+        events = json.loads(_query(allowed, read_group_records, "moderation_logs"))
+        self.assertEqual(events["records"][0]["action"], "lock")
+        member_bot.get_chat_member.assert_awaited()
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
     def test_model_tool_call_receives_scoped_archive_in_same_agent_turn(self):
         archive_message(_message(120, text="فال خوشحال‌کننده"), bot_id=111)
         calls = [{
