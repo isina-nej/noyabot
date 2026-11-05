@@ -2341,7 +2341,8 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     from botapp.agent.parser import is_message_analysis_request
     is_analysis = is_message_analysis_request(ask)
 
-    if not is_analysis and not media.has_audio:
+    from botapp.noya_reply_media import requires_agent_mixed_media
+    if not is_analysis and not media.has_audio and not requires_agent_mixed_media(ask):
         from botapp.noya_reply_media import explicit_image_prompt
         direct_image_prompt = explicit_image_prompt(ask, has_reply=bool(message.reply_to_message))
         if direct_image_prompt and not images:
