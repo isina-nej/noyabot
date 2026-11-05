@@ -550,7 +550,7 @@ async def _deliver_noya_queued_messages(message: Message, metadata: dict) -> boo
             )
         try:
             delivered = await message.bot.send_message(**kwargs)
-        except TelegramAPIError as exc:
+        except Exception as exc:
             logger.warning("Noya outbox send failed: %s", type(exc).__name__)
             continue
         sent_count += 1
