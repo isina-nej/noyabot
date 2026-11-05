@@ -81,17 +81,100 @@ def _summarize(row: MessageSnapshot, scope: dict) -> dict:
     }
 
 
+def _recover_from_bot_inbox(
+    scope: dict, mid: int, cutoff, existing: MessageSnapshot | None,
+) -> MessageSnapshot | None:
+    """Recover old group messages observed by this *same Telegram bot*.
+
+    Legacy per-bot inbox records may predate photo file-ID support in
+    MessageSnapshot. Never read another bot's inbox, another group or topic.
+    """
+    from botapp.models import BotInboxMessage
+
+    bot_id = int(scope.get("bot_id") or 0)
+    if bot_id <= 0:
+        return existing
+    old = BotInboxMessage.objects.filter(
+        bot_id=bot_id, chat_id=scope["chat_id"], thread_id=scope["thread_id"],
+        message_id=mid, chat_type__in=("group", "supergroup"),
+        archived_at__gte=cutoff,
+    ).first()
+    if old is None or (old.message_date and old.message_date < cutoff):
+        return existing
+    if existing is None and MessageSnapshot.objects.filter(
+        chat_id=scope["chat_id"], message_id=mid,
+    ).exists():
+        # A deleted record or a different topic is not repairable by an inbox.
+        return None
+
+    metadata = dict(existing.metadata or {}) if existing else {}
+    if not metadata.get("telegram_link"):
+        link = telegram_message_link(scope.get("chat"), mid)
+        if link:
+            metadata["telegram_link"] = link
+    if old.content_type == "photo" and old.media_file_id:
+        per_bot = dict(metadata.get("media_by_bot") or {})
+        per_bot.setdefault(str(bot_id), {
+            "kind": "photo", "file_id": old.media_file_id[:512],
+        })
+        metadata["media_by_bot"] = per_bot
+
+    if existing is not None:
+        changes = []
+        if metadata != existing.metadata:
+            existing.metadata = metadata
+            changes.append("metadata")
+        # Legacy archives may have missed reply pointers or human sender labels.
+        for key, val in (
+            ("reply_to_message_id", old.reply_to_message_id),
+            ("sender_user_id", old.sender_user_id),
+        ):
+            if not getattr(existing, key) and val:
+                setattr(existing, key, val)
+                changes.append(key)
+        if not existing.sender_name and old.sender_name:
+            existing.sender_name = old.sender_name[:255]
+            changes.append("sender_name")
+        if changes:
+            existing.save(update_fields=changes)
+        return existing
+
+    row, created = MessageSnapshot.objects.get_or_create(
+        chat_id=scope["chat_id"], message_id=mid,
+        defaults={
+            "thread_id": old.thread_id,
+            "sender_user_id": old.sender_user_id,
+            "sender_name": old.sender_name[:255],
+            "sender_username": old.sender_username[:64],
+            "text": old.text[:4096], "caption": old.caption[:4096],
+            "content_type": old.content_type,
+            "reply_to_message_id": old.reply_to_message_id,
+            "created_at": old.message_date,
+            "metadata": metadata,
+        },
+    )
+    if created:
+        logger.info("[NOYA-ARCHIVE-RECOVER] bot-scoped inbox restored chat message_id=%s", mid)
+    return row if row.thread_id == scope["thread_id"] and not row.deleted_by_bot_at else None
+
+
 def _get_snapshot(scope: dict, mid: int) -> MessageSnapshot | None:
     if mid <= 0 or mid >= int(scope["current_message_id"]):
         return None
     cutoff = timezone.now() - timedelta(
         days=max(1, min(365, int(getattr(settings, "MESSAGE_ARCHIVE_RETENTION_DAYS", 30))))
     )
-    return MessageSnapshot.objects.filter(
+    row = MessageSnapshot.objects.filter(
         chat_id=scope["chat_id"], thread_id=scope["thread_id"],
         message_id=mid, archived_at__gte=cutoff,
         deleted_by_bot_at__isnull=True,
     ).first()
+    metadata = row.metadata if row and isinstance(row.metadata, dict) else {}
+    if row and (metadata.get("media_by_bot") or {}).get(str(scope.get("bot_id", ""))):
+        return row
+    # The per-bot inbox was already recording file_id before this archive
+    # gained media references; enrich only from verified matching inbox rows.
+    return _recover_from_bot_inbox(scope, mid, cutoff, row)
 
 
 def _resolve_id(scope: dict, reference: str) -> int | None:
