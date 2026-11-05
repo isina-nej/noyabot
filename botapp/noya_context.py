@@ -270,8 +270,12 @@ def build_noya_user_payload(
             ask_text = ask_text or _DEFAULT_ASK
 
     if not parts:
-        # No reply / recent chatter — keep the bare ask for private/guest paths.
-        return ask_text
+        # A plain request to inspect a historical Telegram message still
+        # needs the scoped-tool guidance even if there is no recent chatter
+        # or quoted reply. Other private/guest requests stay concise.
+        from botapp.agent.parser import is_scoped_archive_chat_request
+        if not is_scoped_archive_chat_request(ask_text):
+            return ask_text
 
     from botapp.agent.parser import (
         is_message_analysis_request, is_scoped_archive_chat_request,
