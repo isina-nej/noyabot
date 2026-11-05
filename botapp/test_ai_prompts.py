@@ -182,6 +182,24 @@ class NoyaSystemPromptTest(TestCase):
         os.environ,
         {
             "NOYA_CREATOR_IDS": "1399836576",
+            "NOYA_CREATOR_NAME": "س" * 80,
+            "NOYA_CREATOR_NAME_EN": "S" * 80,
+            "NOYA_CREATOR_USERNAME": "n" * 32,
+        },
+        clear=False,
+    )
+    def test_prompt_stays_bounded_with_long_server_identity(self):
+        # The live server has a longer creator profile than CI defaults.
+        # Keep enough headroom so deployment does not fail on its .env.
+        prompt = get_noya_system_prompt()
+        self.assertLess(len(prompt), 12000)
+        for name in ("text_to_speech", "generate_image", "edit_image", "web_search"):
+            self.assertIn(name, prompt)
+
+    @patch.dict(
+        os.environ,
+        {
+            "NOYA_CREATOR_IDS": "1399836576",
             "NOYA_CREATOR_NAME": "Sina",
             "NOYA_CREATOR_USERNAME": "sina_example",
             "ADMIN_IDS": "1,2",
