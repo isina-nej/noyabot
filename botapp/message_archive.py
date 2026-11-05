@@ -128,6 +128,9 @@ def archive_message(
                 and payload["thread_id"]):
             snapshot.thread_id = payload["thread_id"]
             updated.append("thread_id")
+        if not snapshot.reply_to_message_id and payload["reply_to_message_id"]:
+            snapshot.reply_to_message_id = payload["reply_to_message_id"]
+            updated.append("reply_to_message_id")
         meta = dict(snapshot.metadata or {})
         identity = payload["metadata"].get("identity", {})
         if identity and meta.get("identity") != identity:
