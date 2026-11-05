@@ -97,7 +97,9 @@ def snapshot_payload(message, bot_id: int = 0) -> dict:
     }
 
 
-def archive_message(message, bot_id: int = 0) -> MessageSnapshot | None:
+def archive_message(
+    message, bot_id: int = 0, thread_id_override: int | None = None,
+) -> MessageSnapshot | None:
     """Upsert a snapshot for a group message. Returns ``None`` when disabled."""
     if not archive_enabled():
         return None
@@ -105,6 +107,10 @@ def archive_message(message, bot_id: int = 0) -> MessageSnapshot | None:
     if not chat or str(getattr(chat, "type", "")) not in GROUP_CHAT_TYPES:
         return None
     payload = snapshot_payload(message, bot_id=bot_id)
+    # Telegram may omit message_thread_id from the replied-to envelope.
+    # A verified same-chat reply supplies its parent's topic in this case.
+    if thread_id_override is not None and not getattr(message, "message_thread_id", None):
+        payload["thread_id"] = int(thread_id_override)
     snapshot, created = MessageSnapshot.objects.get_or_create(
         chat_id=int(chat.id),
         message_id=int(message.message_id),
@@ -118,6 +124,13 @@ def archive_message(message, bot_id: int = 0) -> MessageSnapshot | None:
                 setattr(snapshot, field, payload[field])
                 changed = True
         updated = ["text", "caption", "edited_at"] if changed else []
+        if (thread_id_override is not None and int(snapshot.thread_id or 0) == 0
+                and payload["thread_id"]):
+            snapshot.thread_id = payload["thread_id"]
+            updated.append("thread_id")
+        if not snapshot.reply_to_message_id and payload["reply_to_message_id"]:
+            snapshot.reply_to_message_id = payload["reply_to_message_id"]
+            updated.append("reply_to_message_id")
         meta = dict(snapshot.metadata or {})
         identity = payload["metadata"].get("identity", {})
         if identity and meta.get("identity") != identity:

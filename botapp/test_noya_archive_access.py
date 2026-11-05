@@ -266,6 +266,193 @@ class ArchiveLinksAndToolsTests(TestCase):
         member_bot.get_chat_member.assert_awaited()
 
     @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_legacy_photo_recovers_from_inbox_of_same_bot(self):
+        from botapp.models import BotInboxMessage
+        from botapp.noya_archive_access import trace_group_message
+        now = timezone.now()
+        BotInboxMessage.objects.create(
+            bot_id=111, chat_id=CHAT, message_id=120, thread_id=7,
+            chat_type="supergroup", sender_user_id=444,
+            sender_name="Photo sender", content_type="photo",
+            media_file_id="legacy_photo_file_120", message_date=now,
+        )
+        output = json.loads(_query(_scope(), get_group_message, "120"))
+        self.assertEqual(output["message_id"], 120)
+        self.assertTrue(output["image_available"])
+        recovered = MessageSnapshot.objects.get(chat_id=CHAT, message_id=120)
+        self.assertEqual(recovered.metadata["media_by_bot"]["111"]["file_id"],
+                         "legacy_photo_file_120")
+        self.assertEqual(
+            recovered.metadata["telegram_link"], "https://t.me/c/1234567890/120",
+        )
+        trace = json.loads(_query(_scope(), trace_group_message, "120"))
+        self.assertTrue(trace["found"])
+        self.assertEqual(trace["source"]["user_id"], 444)
+        self.assertIn("ثبت نشده", _query(_scope(bot_id=999), inspect_group_image, "120"))
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_existing_old_photo_snapshot_is_enriched_from_bot_inbox(self):
+        from botapp.models import BotInboxMessage
+        archive_message(_message(120, photo=True), bot_id=0)
+        BotInboxMessage.objects.create(
+            bot_id=111, chat_id=CHAT, message_id=120, thread_id=7,
+            chat_type="supergroup", content_type="photo",
+            media_file_id="original_inbox_file", message_date=timezone.now(),
+        )
+        output = json.loads(_query(_scope(), get_group_message, "120"))
+        self.assertTrue(output["image_available"])
+        row = MessageSnapshot.objects.get(chat_id=CHAT, message_id=120)
+        self.assertEqual(row.metadata["media_by_bot"]["111"]["file_id"],
+                         "original_inbox_file")
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_inbox_fallback_cannot_cross_bot_chat_topic_or_retention(self):
+        from botapp.models import BotInboxMessage
+        now = timezone.now()
+        BotInboxMessage.objects.create(
+            bot_id=222, chat_id=CHAT, message_id=120, thread_id=7,
+            chat_type="supergroup", content_type="photo",
+            media_file_id="other_bot_secret", message_date=now,
+        )
+        BotInboxMessage.objects.create(
+            bot_id=111, chat_id=OTHER, message_id=121, thread_id=7,
+            chat_type="supergroup", content_type="photo",
+            media_file_id="other_group_secret", message_date=now,
+        )
+        BotInboxMessage.objects.create(
+            bot_id=111, chat_id=CHAT, message_id=122, thread_id=8,
+            chat_type="supergroup", content_type="photo",
+            media_file_id="other_thread_secret", message_date=now,
+        )
+        BotInboxMessage.objects.create(
+            bot_id=111, chat_id=CHAT, message_id=123, thread_id=7,
+            chat_type="supergroup", content_type="photo",
+            media_file_id="expired", message_date=now - timedelta(days=90),
+        )
+        for mid in (120, 121, 122, 123):
+            self.assertIn("پیدا نشد", _query(_scope(), get_group_message, str(mid)))
+        self.assertFalse(MessageSnapshot.objects.filter(chat_id=CHAT).exists())
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_fortune_trace_marks_adjacency_unconfirmed_and_reply_verified(self):
+        from botapp.noya_archive_access import trace_group_message
+        ask = _message(119, text="فال")
+        photo = _message(120, photo=True)
+        photo.from_user = SimpleNamespace(
+            id=999, full_name="PhotoBot", first_name="PhotoBot", last_name="",
+            username="photo_bot", is_bot=True,
+        )
+        photo.date = ask.date + timedelta(seconds=12)
+        archive_message(ask, bot_id=111)
+        archive_message(photo, bot_id=111)
+        guess = json.loads(_query(_scope(), trace_group_message, "120"))
+        self.assertEqual(guess["attribution"], "adjacent_unconfirmed")
+        self.assertEqual(guess["possible_requester"]["message_id"], 119)
+        self.assertEqual(guess["possible_requester"]["name"], "حسون")
+        self.assertIn("not proof", guess["caution"])
+
+        photo.reply_to_message = ask
+        archive_message(photo, bot_id=111)
+        # An updated reply pointer is now confirmed, not a temporal guess.
+        confirmed = json.loads(_query(_scope(), trace_group_message, "120"))
+        self.assertEqual(confirmed["attribution"], "verified_telegram_reply")
+        self.assertEqual(confirmed["direct_reply"]["message_id"], 119)
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_multiple_fortune_requesters_are_not_arbitrarily_attributed(self):
+        from botapp.noya_archive_access import trace_group_message
+        first = _message(118, text="فال")
+        second = _message(119, text="فال")
+        second.from_user.id = 88
+        second.from_user.full_name = "Other person"
+        photo = _message(120, photo=True)
+        photo.from_user.id = 999
+        photo.date = first.date + timedelta(seconds=20)
+        archive_message(first, bot_id=111)
+        archive_message(second, bot_id=111)
+        archive_message(photo, bot_id=111)
+        trace = json.loads(_query(_scope(), trace_group_message, "120"))
+        self.assertEqual(trace["attribution"], "ambiguous_multiple_requesters")
+        self.assertIsNone(trace["possible_requester"])
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_verified_archive_reply_stages_real_message_id_and_mention(self):
+        from botapp.noya_archive_access import reply_to_group_message, _SCOPE
+        from botapp.agent.tools import _CHAT_OUTBOX, pop_chat_outbox
+        from botapp.management.commands.runbot import _deliver_noya_queued_messages
+        archive_message(_message(119, text="فال"), bot_id=111)
+
+        async def stage():
+            t1 = _SCOPE.set(_scope())
+            t2 = _CHAT_OUTBOX.set([])
+            try:
+                result = await reply_to_group_message(
+                    "https://t.me/c/1234567890/119",
+                    "گرفتاری‌ها می‌گذرند؛ صبوری کن <حتماً>.",
+                    True,
+                )
+                return result, pop_chat_outbox()
+            finally:
+                _CHAT_OUTBOX.reset(t2)
+                _SCOPE.reset(t1)
+
+        result, batch = async_to_sync(stage)()
+        self.assertIn("آماده", result)
+        self.assertEqual(batch[0]["target_message_id"], 119)
+        self.assertEqual(batch[0]["mention_user_id"], 42)
+        message = SimpleNamespace(
+            message_id=200, message_thread_id=7,
+            chat=SimpleNamespace(id=CHAT),
+            bot=SimpleNamespace(send_message=AsyncMock(
+                return_value=SimpleNamespace(message_id=201))),
+        )
+        handled = async_to_sync(_deliver_noya_queued_messages)(
+            message, {"queued_chat_messages": batch},
+        )
+        self.assertTrue(handled)
+        sent = message.bot.send_message.await_args.kwargs
+        self.assertEqual(sent["chat_id"], CHAT)
+        self.assertEqual(sent["reply_parameters"].message_id, 119)
+        self.assertFalse(sent["reply_parameters"].allow_sending_without_reply)
+        self.assertEqual(sent["parse_mode"], "HTML")
+        self.assertIn('tg://user?id=42', sent["text"])
+        self.assertIn("&lt;حتماً&gt;", sent["text"])
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_archive_reply_requires_same_chat_real_target(self):
+        from botapp.noya_archive_access import reply_to_group_message, _SCOPE
+        from botapp.agent.tools import _CHAT_OUTBOX, pop_chat_outbox
+        archive_message(_message(119, text="فال"), bot_id=111)
+
+        async def stage():
+            t1 = _SCOPE.set(_scope())
+            t2 = _CHAT_OUTBOX.set([])
+            try:
+                invalid = await reply_to_group_message(
+                    "https://t.me/c/9988776655/119", "should not post",
+                )
+                missing = await reply_to_group_message("121", "not archived")
+                return invalid, missing, pop_chat_outbox()
+            finally:
+                _CHAT_OUTBOX.reset(t2)
+                _SCOPE.reset(t1)
+        invalid, missing, outbox = async_to_sync(stage)()
+        self.assertIn("Error", invalid)
+        self.assertIn("Error", missing)
+        self.assertEqual(outbox, [])
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
+    def test_backfill_replied_photo_inherits_verified_forum_topic(self):
+        original = _message(120, photo=True)
+        original.message_thread_id = None
+        row = archive_message(original, bot_id=111, thread_id_override=7)
+        self.assertEqual(row.thread_id, 7)
+        row = archive_message(original, bot_id=111, thread_id_override=7)
+        self.assertEqual(row.thread_id, 7)
+        found = json.loads(_query(_scope(), get_group_message, "120"))
+        self.assertTrue(found["image_available"])
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True, NOYA_HISTORY_ENABLED=True)
     def test_model_tool_call_receives_scoped_archive_in_same_agent_turn(self):
         archive_message(_message(120, text="فال خوشحال‌کننده"), bot_id=111)
         calls = [{

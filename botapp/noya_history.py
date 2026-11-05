@@ -48,6 +48,9 @@ def _record_text(row) -> str:
     parts = [(row.text or row.caption or "").strip()]
     transcript = str(media.get("transcript") or "").strip()
     visual = str(media.get("visual_summary") or "").strip()
+    image_text = str(media.get("image_text") or "").strip()
+    if image_text:
+        parts.append("متن بررسی‌شده داخل عکس: " + image_text[:750])
     if transcript:
         parts.append("گفتار رسانه: " + transcript[:750])
     if visual:
@@ -126,7 +129,7 @@ def archived_context_for_message(message, query: str) -> str:
         text = _record_text(row)
         meta = row.metadata if isinstance(row.metadata, dict) else {}
         link = str(meta.get("telegram_link") or "")[:160]
-        line = f"#{row.message_id} link={link or '-'} user_id={row.sender_user_id or '-'} {name}{username}: {text}\n"
+        line = f"#{row.message_id} link={link or '-'} reply_to={row.reply_to_message_id or '-'} user_id={row.sender_user_id or '-'} {name}{username}: {text}\n"
         if len(line) > remaining:
             break
         output.append(line)

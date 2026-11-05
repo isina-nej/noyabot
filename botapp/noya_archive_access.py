@@ -81,17 +81,100 @@ def _summarize(row: MessageSnapshot, scope: dict) -> dict:
     }
 
 
+def _recover_from_bot_inbox(
+    scope: dict, mid: int, cutoff, existing: MessageSnapshot | None,
+) -> MessageSnapshot | None:
+    """Recover old group messages observed by this *same Telegram bot*.
+
+    Legacy per-bot inbox records may predate photo file-ID support in
+    MessageSnapshot. Never read another bot's inbox, another group or topic.
+    """
+    from botapp.models import BotInboxMessage
+
+    bot_id = int(scope.get("bot_id") or 0)
+    if bot_id <= 0:
+        return existing
+    old = BotInboxMessage.objects.filter(
+        bot_id=bot_id, chat_id=scope["chat_id"], thread_id=scope["thread_id"],
+        message_id=mid, chat_type__in=("group", "supergroup"),
+        archived_at__gte=cutoff,
+    ).first()
+    if old is None or (old.message_date and old.message_date < cutoff):
+        return existing
+    if existing is None and MessageSnapshot.objects.filter(
+        chat_id=scope["chat_id"], message_id=mid,
+    ).exists():
+        # A deleted record or a different topic is not repairable by an inbox.
+        return None
+
+    metadata = dict(existing.metadata or {}) if existing else {}
+    if not metadata.get("telegram_link"):
+        link = telegram_message_link(scope.get("chat"), mid)
+        if link:
+            metadata["telegram_link"] = link
+    if old.content_type == "photo" and old.media_file_id:
+        per_bot = dict(metadata.get("media_by_bot") or {})
+        per_bot.setdefault(str(bot_id), {
+            "kind": "photo", "file_id": old.media_file_id[:512],
+        })
+        metadata["media_by_bot"] = per_bot
+
+    if existing is not None:
+        changes = []
+        if metadata != existing.metadata:
+            existing.metadata = metadata
+            changes.append("metadata")
+        # Legacy archives may have missed reply pointers or human sender labels.
+        for key, val in (
+            ("reply_to_message_id", old.reply_to_message_id),
+            ("sender_user_id", old.sender_user_id),
+        ):
+            if not getattr(existing, key) and val:
+                setattr(existing, key, val)
+                changes.append(key)
+        if not existing.sender_name and old.sender_name:
+            existing.sender_name = old.sender_name[:255]
+            changes.append("sender_name")
+        if changes:
+            existing.save(update_fields=changes)
+        return existing
+
+    row, created = MessageSnapshot.objects.get_or_create(
+        chat_id=scope["chat_id"], message_id=mid,
+        defaults={
+            "thread_id": old.thread_id,
+            "sender_user_id": old.sender_user_id,
+            "sender_name": old.sender_name[:255],
+            "sender_username": old.sender_username[:64],
+            "text": old.text[:4096], "caption": old.caption[:4096],
+            "content_type": old.content_type,
+            "reply_to_message_id": old.reply_to_message_id,
+            "created_at": old.message_date,
+            "metadata": metadata,
+        },
+    )
+    if created:
+        logger.info("[NOYA-ARCHIVE-RECOVER] bot-scoped inbox restored chat message_id=%s", mid)
+    return row if row.thread_id == scope["thread_id"] and not row.deleted_by_bot_at else None
+
+
 def _get_snapshot(scope: dict, mid: int) -> MessageSnapshot | None:
     if mid <= 0 or mid >= int(scope["current_message_id"]):
         return None
     cutoff = timezone.now() - timedelta(
         days=max(1, min(365, int(getattr(settings, "MESSAGE_ARCHIVE_RETENTION_DAYS", 30))))
     )
-    return MessageSnapshot.objects.filter(
+    row = MessageSnapshot.objects.filter(
         chat_id=scope["chat_id"], thread_id=scope["thread_id"],
         message_id=mid, archived_at__gte=cutoff,
         deleted_by_bot_at__isnull=True,
     ).first()
+    metadata = row.metadata if row and isinstance(row.metadata, dict) else {}
+    if row and (metadata.get("media_by_bot") or {}).get(str(scope.get("bot_id", ""))):
+        return row
+    # The per-bot inbox was already recording file_id before this archive
+    # gained media references; enrich only from verified matching inbox rows.
+    return _recover_from_bot_inbox(scope, mid, cutoff, row)
 
 
 def _resolve_id(scope: dict, reference: str) -> int | None:
@@ -165,6 +248,132 @@ async def get_group_message(reference: str = "") -> str:
     if row is None:
         return "این پیام در آرشیو مجاز همین گروه و موضوع پیدا نشد؛ تلگرام امکان واکشی آزاد پیام‌های قدیمی را به ربات نمی‌دهد."
     return json.dumps(_summarize(row, scope), ensure_ascii=False)
+
+
+def _trace_group_message_sync(scope: dict, mid: int) -> dict:
+    from botapp.models import BotInboxMessage
+
+    original = _get_snapshot(scope, mid)
+    if original is None:
+        return {"found": False, "reason": (
+            "نه در آرشیو این گروه و نه در صندوق همین ربات رکورد معتبری پیدا نشد. "
+            "لینک به‌تنهایی محتوای پیام را از API تلگرام بازیابی نمی‌کند."
+        )}
+
+    cutoff = timezone.now() - timedelta(
+        days=max(1, min(365, int(getattr(settings, "MESSAGE_ARCHIVE_RETENTION_DAYS", 30))))
+    )
+    # Bridge older messages from the same bot's opt-in inbox when the main
+    # archive was not yet storing the original group media/preceding request.
+    bot_id = int(scope.get("bot_id") or 0)
+    if bot_id:
+        nearby_inbox = list(BotInboxMessage.objects.filter(
+            bot_id=bot_id, chat_id=scope["chat_id"], thread_id=scope["thread_id"],
+            chat_type__in=("group", "supergroup"), archived_at__gte=cutoff,
+            message_id__lt=mid, message_id__gte=max(1, mid - 30),
+        ).order_by("-message_id")[:15])
+        for inbox_row in nearby_inbox:
+            _get_snapshot(scope, inbox_row.message_id)
+
+    before = list(MessageSnapshot.objects.filter(
+        chat_id=scope["chat_id"], thread_id=scope["thread_id"],
+        message_id__lt=mid, message_id__gte=max(1, mid - 30),
+        archived_at__gte=cutoff, deleted_by_bot_at__isnull=True,
+    ).order_by("-message_id")[:12])
+    parent = _get_snapshot(scope, int(original.reply_to_message_id or 0))
+    proposed = None
+    evidence = "no_request_identified"
+
+    if parent is not None and parent.sender_user_id:
+        proposed = parent
+        evidence = "verified_telegram_reply"
+    elif original.content_type in ("photo", "document", "caption"):
+        # Temporal association is only a possible connection, NEVER a
+        # confirmed recipient. Multiple requests -> ambiguous, no selection.
+        requests = [
+            row for row in before
+            if row.sender_user_id and row.sender_user_id != original.sender_user_id
+            and "فال" in (row.text or row.caption or "")
+            and (not row.created_at or not original.created_at or
+                 0 <= (original.created_at - row.created_at).total_seconds() <= 300)
+        ]
+        identities = {row.sender_user_id for row in requests}
+        if len(identities) == 1:
+            proposed = requests[0]
+            evidence = "adjacent_unconfirmed"
+        elif len(identities) > 1:
+            evidence = "ambiguous_multiple_requesters"
+
+    return {
+        "found": True,
+        "source": _summarize(original, scope),
+        "direct_reply": _summarize(parent, scope) if parent else None,
+        "possible_requester": _summarize(proposed, scope) if proposed else None,
+        "attribution": evidence,
+        "nearby_before": [_summarize(r, scope) for r in before[:8]],
+        "caution": (
+            "verified_telegram_reply means an actual reply pointer; "
+            "adjacent_unconfirmed means nearby messages only and is not proof "
+            "who the image or fortune was intended for."
+        ),
+    }
+
+
+async def trace_group_message(reference: str = "") -> str:
+    """Find a historical message's sender, reply origin and nearby requests."""
+    scope = _budget()
+    if scope is None:
+        return "Error: جست‌وجو فقط در آرشیو همین گروه فعال است."
+    mid = _resolve_id(scope, reference)
+    if mid is None:
+        return "Error: لینک یا شماره پیام متعلق به این گروه نیست."
+    record = await sync_to_async(_trace_group_message_sync, thread_sensitive=True)(scope, mid)
+    return json.dumps(record, ensure_ascii=False)
+
+
+async def reply_to_group_message(
+    reference: str = "", text: str = "", mention_sender: bool = True,
+) -> str:
+    """Stage an archived-target Telegram reply; do not actually send it here.
+
+    Exact recipient is a verified Telegram message ID in this group/topic,
+    and the mention comes exclusively from that archived original sender.
+    """
+    from botapp.agent.tools import _CHAT_OUTBOX, _MEDIA_SEQUENCE, MAX_CHAT_OUTBOX_MESSAGES
+
+    scope = _budget()
+    if scope is None:
+        return "Error: ریپلای به پیام قدیمی فقط در همین گروه مجاز است."
+    mid = _resolve_id(scope, reference)
+    if mid is None:
+        return "Error: لینک یا شناسهٔ پیام متعلق به این گروه نیست."
+    if not isinstance(text, str) or not 1 <= len(text.strip()) <= 1600:
+        return "Error: متن پیام باید بین ۱ تا ۱۶۰۰ کاراکتر باشد."
+    if not isinstance(mention_sender, bool):
+        return "Error: حالت تگ نامعتبر است."
+    outbox = _CHAT_OUTBOX.get()
+    if outbox is None or len(outbox) >= MAX_CHAT_OUTBOX_MESSAGES or _MEDIA_SEQUENCE.get():
+        return "Error: ظرفیت ارسال این درخواست پر شده است."
+
+    row = await sync_to_async(_get_snapshot, thread_sensitive=True)(scope, mid)
+    if row is None:
+        return "Error: پیام مقصد در آرشیو یا صندوق تأییدشدهٔ همین ربات پیدا نشد."
+    sender = int(row.sender_user_id or 0)
+    if mention_sender and not sender:
+        return "Error: فرستندهٔ این پیام شناخته‌شده نیست؛ تگ نکن."
+    outbox.append({
+        "reply_to": "archived",
+        "text": text.strip(),
+        "target_message_id": int(row.message_id),
+        "verified_group_reply": True,
+        "mention_user_id": sender if mention_sender else 0,
+        "mention_label": (row.sender_name or "دوست عزیز")[:70],
+    })
+    return (
+        "پاسخ به پیام آرشیوشدهٔ همین گروه آماده شد؛ "
+        "فقط بعد از تکمیل موفق Agent در تلگرام ارسال می‌شود. "
+        "پاسخ نهایی تکراری ننویس."
+    )
 
 
 def _lookup_nickname_sync(scope: dict, name: str) -> list[dict]:
