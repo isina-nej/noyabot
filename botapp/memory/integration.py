@@ -371,7 +371,7 @@ async def run_ai_with_memory(
     # rather than recording the model's internal "done" acknowledgement.
     queued = agent_metadata.get("queued_chat_messages") or []
     visible_answer = (
-        "\\n".join(item["text"] for item in queued if isinstance(item, dict)
+        "\n".join(item["text"] for item in queued if isinstance(item, dict)
                   and isinstance(item.get("text"), str))
         if isinstance(queued, list) else ""
     )
