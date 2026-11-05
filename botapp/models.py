@@ -21,6 +21,35 @@ class TelegramUser(models.Model):
     def __str__(self):
         return str(self.telegram_user_id)
 
+class NoyaObservedIdentity(models.Model):
+    """Public Telegram name fields + self-declared nickname, scoped per chat.
+
+    Data is collected in groups only when group archival is explicitly enabled;
+    private chats store it only on an explicit nickname request.
+    """
+
+    chat_id = models.BigIntegerField(db_index=True)
+    user_id = models.BigIntegerField()
+    username = models.CharField(max_length=64, blank=True, default="")
+    first_name = models.CharField(max_length=128, blank=True, default="")
+    last_name = models.CharField(max_length=128, blank=True, default="")
+    nickname = models.CharField(max_length=64, blank=True, default="")  # self-declared
+    assigned_nickname = models.CharField(max_length=64, blank=True, default="")  # group label, not verified identity
+    assigned_nickname_by = models.BigIntegerField(null=True, blank=True)
+    updated_at = models.DateTimeField(auto_now=True)
+
+    class Meta:
+        constraints = [
+            models.UniqueConstraint(
+                fields=["chat_id", "user_id"],
+                name="uniq_noya_observed_identity",
+            ),
+        ]
+
+    def __str__(self):
+        return f"NoyaIdentity({self.chat_id}:{self.user_id})"
+
+
 class BotMessageSettings(models.Model):
     start_message = models.TextField(default="ربات استارت شد!")
     join_channel_message = models.TextField(
@@ -983,6 +1012,7 @@ class MessageSnapshot(models.Model):
         indexes = [
             models.Index(fields=["chat_id", "-archived_at"]),
             models.Index(fields=["chat_id", "deleted_by_bot_at"]),
+            models.Index(fields=["chat_id", "thread_id", "-message_id"], name="noya_context_scan_idx"),
         ]
         ordering = ["-archived_at"]
 

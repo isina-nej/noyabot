@@ -130,6 +130,46 @@ async def _ffmpeg(raw: bytes, *, frame: bool = False) -> bytes:
     return out
 
 
+async def _ffmpeg_video_frames(raw: bytes) -> list[bytes]:
+    """Extract up to 3 chronological, downscaled frames with a single ffmpeg run.
+
+    This is opt-in to keep the existing single-thumbnail path cheap.
+    """
+    command = [
+        "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+        "-i", "pipe:0",
+        "-t", str(_max_seconds()),
+        "-vf", "fps=1/10,scale=640:-2",
+        "-frames:v", "3", "-f", "image2pipe", "-vcodec", "mjpeg", "pipe:1",
+    ]
+    process = await asyncio.create_subprocess_exec(
+        *command, stdin=asyncio.subprocess.PIPE,
+        stdout=asyncio.subprocess.PIPE, stderr=asyncio.subprocess.PIPE,
+    )
+    try:
+        data, _ = await asyncio.wait_for(process.communicate(raw), timeout=35)
+    except asyncio.TimeoutError as exc:
+        process.kill()
+        await process.communicate()
+        raise RuntimeError("خواندن فریم‌های ویدیو بیش از زمان مجاز طول کشید.") from exc
+    if process.returncode or not data:
+        return []
+    # ffmpeg concatenates JPEG files in the image2pipe stream. Do not decode
+    # arbitrary bytes as frame boundaries: accept only JPEG SOI/EOI pairs.
+    frames = []
+    cursor = 0
+    while cursor < len(data) and len(frames) < 3:
+        start = data.find(b"\xff\xd8", cursor)
+        if start < 0:
+            break
+        end = data.find(b"\xff\xd9", start + 2)
+        if end < 0:
+            break
+        frames.append(data[start:end + 2])
+        cursor = end + 2
+    return frames
+
+
 def _stt_url() -> str:
     url = os.getenv("NOYA_STT_API_URL", "").strip()
     if url:
@@ -234,10 +274,20 @@ async def prepare_media_for_noya(bot, message, *, include_reply: bool = True) ->
         else:
             if kind == "video":
                 try:
-                    frame = await _ffmpeg(raw, frame=True)
-                    normalized_mime, normalized = normalize_image_bytes(frame)
-                    if len(prepared.images) < MAX_IMAGES:
-                        prepared.images.append({"mime": normalized_mime, "data": normalized, "source": "video_frame"})
+                    if os.getenv("NOYA_VIDEO_SAMPLE_FRAMES", "false").lower() in {"1", "true", "yes", "on"}:
+                        frames = await _ffmpeg_video_frames(raw)
+                        if not frames:
+                            frames = [await _ffmpeg(raw, frame=True)]
+                    else:
+                        frames = [await _ffmpeg(raw, frame=True)]
+                    for index, frame in enumerate(frames[:MAX_IMAGES]):
+                        normalized_mime, normalized = normalize_image_bytes(frame)
+                        if len(prepared.images) >= MAX_IMAGES:
+                            break
+                        item = {"mime": normalized_mime, "data": normalized, "source": "video_frame"}
+                        if len(frames) > 1:
+                            item.update({"frame_index": index + 1, "frame_count": len(frames)})
+                        prepared.images.append(item)
                 except (RuntimeError, ValueError, OSError) as exc:
                     prepared.warnings.append(f"فریم ویدیو قابل خواندن نبود: {exc}")
                 raw = await _ffmpeg(raw, frame=False)

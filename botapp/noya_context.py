@@ -224,6 +224,7 @@ def build_noya_user_payload(
     bot_username: str = "",
     include_recent: bool | None = None,
     recent_limit: int = _RECENT_DEFAULT,
+    archived_context: str = "",
 ) -> str:
     """Wrap the user ask with reply chain + recent group chatter."""
     ask_text = (ask or "").strip()
@@ -244,7 +245,10 @@ def build_noya_user_payload(
         # Keep reply identity even when Telegram supplied media without text.
         parts.append(f"[پیام مورد اشاره — {_sender_label(replied)}]\n[MESSAGE_METADATA] {_message_metadata(replied)}")
 
-    use_recent = _is_group(message) if include_recent is None else bool(include_recent)
+    if archived_context:
+        parts.append(archived_context)
+
+    use_recent = (_is_group(message) and not archived_context) if include_recent is None else bool(include_recent)
     if use_recent:
         chat = getattr(message, "chat", None)
         chat_id = int(getattr(chat, "id", 0) or 0)

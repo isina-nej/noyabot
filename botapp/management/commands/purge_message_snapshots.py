@@ -22,4 +22,7 @@ class Command(BaseCommand):
             getattr(settings, "MESSAGE_ARCHIVE_RETENTION_DAYS", 30)
         )
         deleted = purge_old(retention)
+        from botapp.noya_identity import purge_stale_identities
+        identities = purge_stale_identities(retention)
         self.stdout.write(f"Deleted {deleted} message snapshot(s) older than {retention} day(s).")
+        self.stdout.write(f"Deleted {identities} inactive observed identity row(s).")

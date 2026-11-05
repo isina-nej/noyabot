@@ -1221,6 +1221,78 @@ async def forget_all_memory(message: Message, command: CommandObject):
     await forget_all_command(message, action_reason(command))
 
 
+@router.message(Command("nickname"))
+async def nickname_command(message: Message, command: CommandObject):
+    """A reply labels that Telegram user in this group; otherwise self."""
+    from botapp.noya_identity import _nickname_from_text, set_command_nickname
+    nickname = action_reason(command).strip()
+    if not nickname:
+        await message.reply(
+            "استفاده: /nickname لقب دلخواه\n"
+            "برای ثبت لقب یک نفر، روی پیام همان شخص ریپلای کن."
+        )
+        return
+    if _nickname_from_text("/nickname " + nickname) != nickname:
+        await message.reply("لقب باید ۲ تا ۶۴ کاراکتر ساده باشد.")
+        return
+    try:
+        scope, label = await sync_to_async(
+            set_command_nickname, thread_sensitive=True,
+        )(message, nickname)
+        if scope == "reply":
+            await message.reply(
+                f"لقب «{nickname}» برای «{label}» در همین گروه ثبت شد. "
+                "این لقب را شما تعیین کردی، نه صاحب حساب."
+            )
+        elif scope == "self":
+            await message.reply(
+                "لقبت برای همین گفتگو ثبت شد. برای پاک‌کردن /nickname_clear را بفرست."
+            )
+        elif scope == "invalid_target":
+            await message.reply(
+                "نتوانستم صاحب پیام ریپلای‌شده را از تلگرام تشخیص بدهم. "
+                "روی پیام یک کاربر انسانی در همین گروه ریپلای کن."
+            )
+        else:
+            await message.reply("ثبت لقب ممکن نیست؛ فرستنده یا لقب نامعتبر است.")
+    except Exception:
+        logger.warning("Nickname save failed", exc_info=True)
+        await message.reply("ذخیره لقب فعلاً ممکن نیست.")
+
+
+@router.message(Command("nickname_clear"))
+async def nickname_clear_command(message: Message):
+    from botapp.noya_identity import clear_nickname, clear_reply_assigned_nickname
+    sender = getattr(message, "from_user", None)
+    if sender is None:
+        return
+    reply = getattr(message, "reply_to_message", None)
+    if reply is not None:
+        target = getattr(reply, "from_user", None)
+        reply_chat = getattr(reply, "chat", None)
+        if not (
+            target and not getattr(target, "is_bot", False)
+            and reply_chat and int(reply_chat.id) == int(message.chat.id)
+        ):
+            await message.reply("شناسه صاحب پیام ریپلای‌شده مشخص نیست.")
+            return
+        if int(target.id) != int(sender.id):
+            cleared = await sync_to_async(
+                clear_reply_assigned_nickname, thread_sensitive=True,
+            )(int(message.chat.id), int(target.id), int(sender.id))
+            await message.reply(
+                "لقبی که برای این فرد تعیین کرده بودی پاک شد."
+                if cleared else "لقبی از طرف تو برای این فرد ثبت نشده است."
+            )
+            return
+    cleared = await sync_to_async(clear_nickname, thread_sensitive=True)(
+        int(message.chat.id), int(sender.id),
+    )
+    await message.reply(
+        "لقب این گفتگو پاک شد." if cleared else "لقبی برای این گفتگو ذخیره نشده بود."
+    )
+
+
 @router.message(Command("prompt"))
 async def prompt(message: Message, command: CommandObject):
     chat = message.chat
@@ -1938,7 +2010,15 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     # request to explain another person's question or private life.
     from botapp.noya_attention import quick_attention_reply
     attention = quick_attention_reply(message)
-    if attention:
+    # In opt-in archived groups, even a bare call should use recent context.
+    from django.conf import settings as _history_settings
+    from botapp.message_archive import archive_enabled as _history_archive_enabled
+    contextual_call = (
+        _history_archive_enabled()
+        and getattr(_history_settings, "NOYA_HISTORY_ENABLED", True)
+        and str(getattr(message.chat, "type", "")) in {"group", "supergroup"}
+    )
+    if attention and not contextual_call:
         await message.reply(attention)
         return
 
@@ -1951,6 +2031,14 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     from botapp.media_intake import prepare_media_for_noya, is_transcription_request
 
     media = await prepare_media_for_noya(message.bot, message)
+    # The media is already decoded for this turn: cache its transcript in the
+    # opt-in group archive instead of sending a duplicate STT job.
+    if media.transcript:
+        from botapp.noya_archive_media import save_prepared_media
+        try:
+            await save_prepared_media(message, media)
+        except Exception as exc:
+            logger.info("Archive media cache unavailable: %s", type(exc).__name__)
     images = media.images
     ask = (question or "").strip()
     t_chat_start = monotonic()
@@ -1984,7 +2072,15 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
             return
         images = [replied_frame, *images][:3]
     # Attach reply-chain + recent group chatter so Noya can read the chat/tag target.
-    payload = build_noya_user_payload(message, ask, bot_username=bot_username)
+    from botapp.noya_history import archived_context_for_message
+    try:
+        history = await sync_to_async(archived_context_for_message, thread_sensitive=True)(message, ask)
+    except Exception as exc:
+        logger.warning("Noya group history unavailable: %s", type(exc).__name__)
+        history = ""
+    payload = build_noya_user_payload(
+        message, ask, bot_username=bot_username, archived_context=history,
+    )
     if media.context:
         # Untrusted attachment material is provided as data, not as instructions.
         payload += "\n\n" + media.context
