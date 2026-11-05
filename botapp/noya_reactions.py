@@ -10,7 +10,7 @@ import re
 
 # Telegram's standard reaction emoji, deliberately excluding paid/custom emoji.
 REACTION_EMOJIS = frozenset({
-    "❤️", "👍", "🔥", "🥰", "👏", "😁", "🤔", "🤯",
+    "❤️", "👍", "👎", "🔥", "🥰", "👏", "😁", "🤔", "🤯",
     "😱", "🤬", "😢", "🎉", "🤩", "🤮", "💩", "🙏",
     "👌", "🕊", "🤡", "🥱", "🥴", "😍", "🐳", "❤️‍🔥",
     "🌚", "🌭", "💯", "🤣", "⚡", "🍌", "🏆", "💔",
@@ -21,8 +21,13 @@ REACTION_EMOJIS = frozenset({
     "🙉", "🦄", "😘", "💊", "🙊", "😎", "👾",
     "🤷‍♂", "🤷", "🤷‍♀", "😡",
 })
-# Conservative subset with broad Telegram support and appropriate social tone.
-SUGGESTED_REACTIONS = frozenset({"❤️", "👍", "🥰", "👏", "😁", "🎉", "🤩", "🙏", "🤣", "🤝", "👀", "🔥"})
+# Every standard non-paid emoji documented by Telegram Bot API. Individual
+# groups can further restrict which of these are available on their messages.
+SUGGESTED_REACTIONS = REACTION_EMOJIS
+PREFERRED_REACTIONS = frozenset({"❤️", "👍", "🥰", "👏", "😁", "🎉", "🤩", "🙏", "🤣", "🤝", "👀", "🔥"})
+# 💙 is not a standard ReactionTypeEmoji in the Telegram Bot API (Nov 2026).
+# Do not silently replace a user's chosen heart color or send an emoji message.
+UNSUPPORTED_REQUESTED_REACTIONS = frozenset({"💙"})
 
 _REACTION_PATTERN = re.compile(r"^\[\[NOYA_REACT:([^\[\]\n]{1,12})\]\]$")
 _ACK_PREFIX = (
@@ -45,6 +50,18 @@ _TASK_HINTS = (
 
 def _enabled() -> bool:
     return os.getenv("NOYA_REACTION_ENABLED", "true").strip().casefold() in {"1", "true", "yes", "on"}
+
+
+def explicit_reaction_intent(text: str) -> bool:
+    """Only a clear current-message reaction request bypasses social gating."""
+    raw = str(text or "").casefold()
+    return (
+        any(word in raw for word in ("ریاکشن", "ری‌اکشن", "ری اکشن", "reaction", "react"))
+        or (
+            any(word in raw for word in ("قلب", "ایموجی"))
+            and any(word in raw for word in ("بزن", "بذار", "بگذار", "بزار", "بفرست"))
+        )
+    )
 
 
 def _social_text(value: str) -> str:
@@ -97,8 +114,9 @@ def reaction_instruction() -> str:
         "این پیام یک واکنش اجتماعی سبک است، نه درخواست اطلاعات یا اقدام. "
         "اگر ادامه‌دادن گفتگو ارزش دارد، با لحن گرم و انسانی و چند جمله طبیعی پاسخ بده؛ "
         "فقط اگر پاسخ متنی واقعاً اضافی است، به‌جایش یکی از ری‌اکشن‌های مجاز را انتخاب کن. "
-        "برای ری‌اکشن، تمام خروجی باید دقیقاً به فرم [[NOYA_REACT:❤️]] باشد "
-        "(ایموجی را فقط از ❤️ 👍 🥰 👏 😁 🎉 🤩 🙏 🤣 🤝 👀 🔥 انتخاب کن). "
+        "برای ری‌اکشنِ تنها، تمام خروجی می‌تواند دقیقاً [[NOYA_REACT:❤️]] باشد. "
+        "نمونه‌های مناسب: ❤️ 👍 🥰 👏 😁 🎉 🤩 🙏 🤣 🤝 👀 🔥؛ "
+        "سایر ری‌اکشن‌های استاندارد مجاز نیز قابل انتخاب‌اند. "
         "در این حالت هیچ جمله، توضیح، نقل قول یا علامت دیگری ننویس. "
         "اگر موضوع نیاز به همدلی کلامی، جواب، گفتگوی واقعی یا کمک دارد، حتماً متن طبیعی بنویس؛ "
         "ری‌اکشن جایگزین پرسش و پاسخ نیست."
