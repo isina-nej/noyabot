@@ -154,6 +154,8 @@ def _get_time(**_extra) -> str:
 
 async def _generate_image(prompt: str = "") -> str:
     from botapp.services import generate_noya_image
+    from botapp.noya_chat_actions import set_active_chat_action
+    await set_active_chat_action("upload_photo")
     img_bytes = await generate_noya_image(prompt)
     if not img_bytes:
         return "خطا در تولید تصویر."
@@ -166,6 +168,8 @@ async def _generate_image(prompt: str = "") -> str:
 
 async def _text_to_speech(text: str = "") -> str:
     from botapp.services import generate_noya_tts
+    from botapp.noya_chat_actions import set_active_chat_action
+    await set_active_chat_action("record_voice")
     audio = await generate_noya_tts(text)
     if not audio:
         return "خطا در تولید صدا."
