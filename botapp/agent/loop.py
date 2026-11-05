@@ -7,6 +7,7 @@ Pattern from hermes-agent/agent/conversation_loop.py:
 from __future__ import annotations
 import json
 import logging
+import math
 import os
 import re
 import time
@@ -29,6 +30,28 @@ from .tools import isolated_media_results, pop_media_result
 logger = logging.getLogger(__name__)
 
 MAX_ITERATIONS = 8  # safety cap — Hermes uses iteration_budget
+
+
+def _bounded_float_env(name: str, default: float, *, minimum: float, maximum: float) -> float:
+    """Read a per-request latency setting, rejecting NaN, infinity and bad values."""
+    try:
+        value = float(os.getenv(name, str(default)))
+        if not math.isfinite(value):
+            raise ValueError("non-finite value")
+    except (TypeError, ValueError):
+        logger.warning("[NOYA-AGENT] Invalid %s; using default", name)
+        return default
+    return max(minimum, min(value, maximum))
+
+
+def _bounded_int_env(name: str, default: int, *, minimum: int, maximum: int) -> int:
+    """Bound the generation budget even if an environment setting is malformed."""
+    try:
+        value = int(os.getenv(name, str(default)))
+    except (TypeError, ValueError):
+        logger.warning("[NOYA-AGENT] Invalid %s; using default", name)
+        return default
+    return max(minimum, min(value, maximum))
 
 #: Provider fields that carry *internal* reasoning, never user-facing text.
 #: Some 9Router/OpenAI-compatible backends put their planning notes
@@ -168,6 +191,14 @@ async def run_agent_loop(
     # research tools). The admin catalog shares this registry but is
     # never offered to the chat model.
     tools = registry.chat_definitions()
+    # Keep slow or misconfigured providers from blocking a Telegram reply for
+    # five minutes. A per-run client also reuses its connection for tool rounds.
+    provider_timeout_s = _bounded_float_env(
+        "NOYA_AGENT_TIMEOUT_S", 90.0, minimum=10.0, maximum=300.0,
+    )
+    max_completion_tokens = _bounded_int_env(
+        "NOYA_CHAT_MAX_TOKENS", 2048, minimum=128, maximum=8192,
+    )
 
     messages: list[dict[str, Any]] = []
     if system_prompt:
@@ -226,23 +257,24 @@ async def run_agent_loop(
     MAX_FETCHES = 6
     MAX_RESEARCH_CALLS = 4
 
-    for iteration in range(MAX_ITERATIONS):
-        payload: dict[str, Any] = {
-            "model": tool_model,
-            "messages": messages,
-        }
-        if tools:
-            payload["tools"] = tools
-            payload["tool_choice"] = "auto"
+    async with httpx.AsyncClient(timeout=provider_timeout_s) as client:
+        for iteration in range(MAX_ITERATIONS):
+            payload: dict[str, Any] = {
+                "model": tool_model,
+                "messages": messages,
+                "max_tokens": max_completion_tokens,
+            }
+            if tools:
+                payload["tools"] = tools
+                payload["tool_choice"] = "auto"
 
-        logger.info(f"[NOYA-AGENT] Iteration {iteration+1}, model={tool_model}, tools={len(tools)}")
+            logger.info(f"[NOYA-AGENT] Iteration {iteration+1}, model={tool_model}, tools={len(tools)}")
 
-        # Send request with explicit stream=false, but parse SSE anyway
-        # because some 9Router combos always return SSE
-        payload["stream"] = False
-        request_started = time.perf_counter()
-        ai_provider_request_begin(tool_model)
-        async with httpx.AsyncClient(timeout=300.0) as client:
+            # Send request with explicit stream=false, but parse SSE anyway
+            # because some 9Router combos always return SSE
+            payload["stream"] = False
+            request_started = time.perf_counter()
+            ai_provider_request_begin(tool_model)
             try:
                 resp = await client.post(api_url, json=payload, headers=headers)
                 resp.raise_for_status()
@@ -268,157 +300,201 @@ async def run_agent_loop(
                 logger.warning(f"[NOYA-AGENT] Request error: {type(e).__name__}")
                 return "خطا در اتصال به هوش مصنوعی.", metadata
 
-        text = (resp.text or "").strip()
-        if not text:
-            ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
-                                    status="malformed", model=tool_model,
-                                    http_status=resp.status_code)
-            logger.warning("[NOYA-AGENT] Empty response body from AI provider (status=%s)", resp.status_code)
-            return "پاسخی از هوش مصنوعی دریافت نشد.", metadata
+            text = (resp.text or "").strip()
+            if not text:
+                ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
+                                        status="malformed", model=tool_model,
+                                        http_status=resp.status_code)
+                logger.warning("[NOYA-AGENT] Empty response body from AI provider (status=%s)", resp.status_code)
+                return "پاسخی از هوش مصنوعی دریافت نشد.", metadata
 
-        ai_provider_request_end(duration_ms=(time.perf_counter() - request_started) * 1000,
-                                status="ok", model=tool_model, http_status=resp.status_code)
+            # ── Parse response: try JSON first, then SSE stream ──
+            try:
+                data = resp.json()
+            except Exception:
+                # SSE stream format: "data: {json}\n\ndata: {json}\n\n..."
+                data = _parse_sse_stream(text)
+                if not data:
+                    ai_provider_request_end(
+                        duration_ms=(time.perf_counter() - request_started) * 1000,
+                        status="malformed", model=tool_model, http_status=resp.status_code,
+                    )
+                    ai_sse_malformed(api_url)
+                    logger.error("[NOYA-AGENT] Unparseable provider response status=%s bytes=%d", resp.status_code, len(text))
+                    return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
 
-        # ── Parse response: try JSON first, then SSE stream ──
-        try:
-            data = resp.json()
-        except Exception:
-            # SSE stream format: "data: {json}\n\ndata: {json}\n\n..."
-            data = _parse_sse_stream(text)
-            if not data:
-                ai_sse_malformed(api_url)
-                logger.error("[NOYA-AGENT] Unparseable provider response status=%s bytes=%d", resp.status_code, len(text))
+            if not isinstance(data, dict) or not isinstance(data.get("choices"), list) or not data["choices"]:
+                ai_provider_request_end(
+                    duration_ms=(time.perf_counter() - request_started) * 1000,
+                    status="invalid_response", model=tool_model, http_status=resp.status_code,
+                )
+                logger.warning("[NOYA-AGENT] AI provider returned no choices")
                 return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
 
-        choice = data.get("choices", [{}])[0]
-        msg = choice.get("message", {})
-        finish = choice.get("finish_reason", "")
+            choice = data["choices"][0]
+            if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
+                ai_provider_request_end(
+                    duration_ms=(time.perf_counter() - request_started) * 1000,
+                    status="invalid_response", model=tool_model, http_status=resp.status_code,
+                )
+                logger.warning("[NOYA-AGENT] AI provider returned invalid message")
+                return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
 
-        # Reasoning is never user-visible: record only how much was dropped.
-        reasoning_chars = data.get("reasoning_chars") if isinstance(data, dict) else None
-        if reasoning_chars is None:
-            reasoning_chars = _drop_reasoning(msg)
-        if reasoning_chars:
-            metadata["reasoning_chars_dropped"] = metadata.get("reasoning_chars_dropped", 0) + reasoning_chars
+            msg = choice["message"]
+            finish = choice.get("finish_reason", "")
+            usage = data.get("usage") or {}
+            if not isinstance(usage, dict):
+                usage = {}
+            completion_details = usage.get("completion_tokens_details") or {}
+            if not isinstance(completion_details, dict):
+                completion_details = {}
+            duration_ms = (time.perf_counter() - request_started) * 1000
+            ai_provider_request_end(
+                duration_ms=duration_ms, status="ok", model=tool_model,
+                http_status=resp.status_code,
+                tokens_in=usage.get("prompt_tokens") if isinstance(usage.get("prompt_tokens"), (int, float)) else None,
+                tokens_out=usage.get("completion_tokens") if isinstance(usage.get("completion_tokens"), (int, float)) else None,
+            )
+            logger.info(
+                "[NOYA-PROVIDER] model=%s iteration=%d latency_ms=%.1f "
+                "prompt_tokens=%s completion_tokens=%s reasoning_tokens=%s finish_reason=%s",
+                tool_model, iteration + 1, duration_ms,
+                usage.get("prompt_tokens"), usage.get("completion_tokens"),
+                completion_details.get("reasoning_tokens"), finish,
+            )
+            if finish == "length":
+                metadata["response_truncated"] = True
+                # A truncated tool-call payload may contain incomplete arguments.
+                # Never execute partial side effects on the basis of that payload.
+                if msg.get("tool_calls") or not (msg.get("content") or "").strip():
+                    logger.warning("[NOYA-AGENT] Provider hit completion budget before a usable reply")
+                    return "پاسخ مدل به سقف طول رسید؛ لطفاً درخواست را کوتاه‌تر بفرستید.", metadata
 
-        # Only ``message.content`` may become user-visible text — a JSON (non
-        # SSE) response can carry ``reasoning_content`` too, and it is ignored.
-        raw_content = msg.get("content") or ""
-        ai_response_extracted(
-            content_chars=len(raw_content) if isinstance(raw_content, str) else 0,
-            reasoning_chars=int(reasoning_chars or 0),
-        )
+            # Reasoning is never user-visible: record only how much was dropped.
+            reasoning_chars = data.get("reasoning_chars") if isinstance(data, dict) else None
+            if reasoning_chars is None:
+                reasoning_chars = _drop_reasoning(msg)
+            if reasoning_chars:
+                metadata["reasoning_chars_dropped"] = metadata.get("reasoning_chars_dropped", 0) + reasoning_chars
 
-        # ── No tool calls → done ──
-        tool_calls = msg.get("tool_calls")
-        if not tool_calls:
-            if silence_allowed and not used_tools and isinstance(raw_content, str):
-                from botapp.noya_silence import silent_token
-                if silent_token(raw_content, allowed=True):
-                    metadata["no_reply"] = True
-                    return "", metadata
-            if reaction_allowed and not used_tools and isinstance(raw_content, str):
-                from botapp.noya_reactions import extract_reaction
-                emoji = extract_reaction(raw_content, allowed=True)
-                if emoji:
-                    metadata["reaction_emoji"] = emoji
-                    return "", metadata
-            final_text = sanitize_outgoing_text(raw_content)
-            if not final_text:
-                # Never fall back to the raw text: it may be nothing but an
-                # internal planning annotation.
-                metadata["sanitized_empty"] = True
-                if raw_content.strip():
-                    logger.warning(
-                        "[NOYA-AGENT] Reply was entirely an internal annotation (%d chars); suppressed",
-                        len(raw_content),
-                    )
-            if used_tools:
-                metadata["tools_used"] = used_tools
-            return final_text, metadata
+            # Only ``message.content`` may become user-visible text — a JSON (non
+            # SSE) response can carry ``reasoning_content`` too, and it is ignored.
+            raw_content = msg.get("content") or ""
+            ai_response_extracted(
+                content_chars=len(raw_content) if isinstance(raw_content, str) else 0,
+                reasoning_chars=int(reasoning_chars or 0),
+            )
 
-        # ── Execute tool calls (parallel like Hermes) ──
-        # The assistant turn pushed back into the conversation is sanitized as
-        # well, so a leaked note cannot be re-primed into the next iteration.
-        # Tool results stay raw: tool output is data, not outbound text.
-        messages.append({
-            "role": "assistant",
-            "content": sanitize_outgoing_text(raw_content),
-            "tool_calls": tool_calls,
-        })
+            # ── No tool calls → done ──
+            tool_calls = msg.get("tool_calls")
+            if not tool_calls:
+                if silence_allowed and not used_tools and isinstance(raw_content, str):
+                    from botapp.noya_silence import silent_token
+                    if silent_token(raw_content, allowed=True):
+                        metadata["no_reply"] = True
+                        return "", metadata
+                if reaction_allowed and not used_tools and isinstance(raw_content, str):
+                    from botapp.noya_reactions import extract_reaction
+                    emoji = extract_reaction(raw_content, allowed=True)
+                    if emoji:
+                        metadata["reaction_emoji"] = emoji
+                        return "", metadata
+                final_text = sanitize_outgoing_text(raw_content)
+                if not final_text:
+                    # Never fall back to the raw text: it may be nothing but an
+                    # internal planning annotation.
+                    metadata["sanitized_empty"] = True
+                    if raw_content.strip():
+                        logger.warning(
+                            "[NOYA-AGENT] Reply was entirely an internal annotation (%d chars); suppressed",
+                            len(raw_content),
+                        )
+                if used_tools:
+                    metadata["tools_used"] = used_tools
+                return final_text, metadata
 
-        for tc in tool_calls:
-            fn = tc.get("function", {})
-            tool_name = fn.get("name", "")
-            try:
-                args = json.loads(fn.get("arguments", "{}"))
-            except json.JSONDecodeError:
-                args = {}
+            # ── Execute tool calls (parallel like Hermes) ──
+            # The assistant turn pushed back into the conversation is sanitized as
+            # well, so a leaked note cannot be re-primed into the next iteration.
+            # Tool results stay raw: tool output is data, not outbound text.
+            messages.append({
+                "role": "assistant",
+                "content": sanitize_outgoing_text(raw_content),
+                "tool_calls": tool_calls,
+            })
 
-            logger.info("[NOYA-AGENT] Calling tool=%s arg_keys=%s", tool_name,
-                        sorted(args) if isinstance(args, dict) else [])
+            for tc in tool_calls:
+                fn = tc.get("function", {})
+                tool_name = fn.get("name", "")
+                try:
+                    args = json.loads(fn.get("arguments", "{}"))
+                except json.JSONDecodeError:
+                    args = {}
 
-            # ── Loop & Budget Deduplication Guards ──
-            if tool_name == "web_search":
-                raw_q = (args.get("query") or "").strip()
-                q = re.sub(r"\s+", " ", raw_q).casefold()
-                if q in seen_search_queries:
-                    result = "این جستجو قبلاً با همین عبارت انجام شده است؛ لطفاً بر اساس اطلاعات بالا پاسخ را ادامه دهید."
-                elif search_count >= MAX_SEARCHES:
-                    result = "سقف تعداد جستجو در این مکالمه تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
+                logger.info("[NOYA-AGENT] Calling tool=%s arg_keys=%s", tool_name,
+                            sorted(args) if isinstance(args, dict) else [])
+
+                # ── Loop & Budget Deduplication Guards ──
+                if tool_name == "web_search":
+                    raw_q = (args.get("query") or "").strip()
+                    q = re.sub(r"\s+", " ", raw_q).casefold()
+                    if q in seen_search_queries:
+                        result = "این جستجو قبلاً با همین عبارت انجام شده است؛ لطفاً بر اساس اطلاعات بالا پاسخ را ادامه دهید."
+                    elif search_count >= MAX_SEARCHES:
+                        result = "سقف تعداد جستجو در این مکالمه تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
+                    else:
+                        seen_search_queries.add(q)
+                        search_count += 1
+                        result = await _dispatch_observed(tool_name, args)
+                elif tool_name == "fetch_url":
+                    from botapp.web.ranking import canonicalize_url
+                    u = canonicalize_url(args.get("url") or "")
+                    if u in seen_fetch_urls:
+                        result = "این صفحه قبلاً دریافت شده است؛ لطفاً از محتوای بالا استفاده کنید."
+                    elif fetch_count >= MAX_FETCHES:
+                        result = "سقف تعداد دریافت صفحات وب تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
+                    else:
+                        seen_fetch_urls.add(u)
+                        fetch_count += 1
+                        result = await _dispatch_observed(tool_name, args)
+                elif tool_name in (
+                    "research.social_search", "x.search_posts", "x.get_post",
+                    "x.get_thread", "x.get_user", "x.get_user_posts",
+                    "x.get_replies", "youtube.search", "youtube.get_video",
+                    "youtube.get_channel", "youtube.get_comments",
+                    "youtube.get_playlist", "youtube.get_transcript",
+                ):
+                    raw_q = (args.get("query") or args.get("post_id")
+                             or args.get("video_id") or args.get("handle")
+                             or args.get("channel_id") or args.get("playlist_id") or "").strip()
+                    norm_q = re.sub(r"\s+", " ", raw_q).casefold()
+                    q = tool_name + ":" + norm_q
+                    if q in seen_research_queries:
+                        result = "این تحقیق قبلاً با همین ورودی انجام شده است؛ لطفاً بر اساس اطلاعات بالا پاسخ را ادامه دهید."
+                    elif research_count >= MAX_RESEARCH_CALLS:
+                        result = "سقف تعداد تحقیق (X/YouTube/اجتماعی) در این مکالمه تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
+                    else:
+                        seen_research_queries.add(q)
+                        research_count += 1
+                        result = await _dispatch_observed(tool_name, args)
                 else:
-                    seen_search_queries.add(q)
-                    search_count += 1
                     result = await _dispatch_observed(tool_name, args)
-            elif tool_name == "fetch_url":
-                from botapp.web.ranking import canonicalize_url
-                u = canonicalize_url(args.get("url") or "")
-                if u in seen_fetch_urls:
-                    result = "این صفحه قبلاً دریافت شده است؛ لطفاً از محتوای بالا استفاده کنید."
-                elif fetch_count >= MAX_FETCHES:
-                    result = "سقف تعداد دریافت صفحات وب تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
-                else:
-                    seen_fetch_urls.add(u)
-                    fetch_count += 1
-                    result = await _dispatch_observed(tool_name, args)
-            elif tool_name in (
-                "research.social_search", "x.search_posts", "x.get_post",
-                "x.get_thread", "x.get_user", "x.get_user_posts",
-                "x.get_replies", "youtube.search", "youtube.get_video",
-                "youtube.get_channel", "youtube.get_comments",
-                "youtube.get_playlist", "youtube.get_transcript",
-            ):
-                raw_q = (args.get("query") or args.get("post_id")
-                         or args.get("video_id") or args.get("handle")
-                         or args.get("channel_id") or args.get("playlist_id") or "").strip()
-                norm_q = re.sub(r"\s+", " ", raw_q).casefold()
-                q = tool_name + ":" + norm_q
-                if q in seen_research_queries:
-                    result = "این تحقیق قبلاً با همین ورودی انجام شده است؛ لطفاً بر اساس اطلاعات بالا پاسخ را ادامه دهید."
-                elif research_count >= MAX_RESEARCH_CALLS:
-                    result = "سقف تعداد تحقیق (X/YouTube/اجتماعی) در این مکالمه تکمیل شده است؛ لطفاً بر اساس اطلاعات موجود پاسخ دهید."
-                else:
-                    seen_research_queries.add(q)
-                    research_count += 1
-                    result = await _dispatch_observed(tool_name, args)
-            else:
-                result = await _dispatch_observed(tool_name, args)
 
-            used_tools.append(tool_name)
+                used_tools.append(tool_name)
 
-            # This result is owned by this agent task, never another user's
-            # concurrent request. Tool-call IDs remain in the LLM transcript.
-            if tool_name == "generate_image":
-                image_b64 = pop_media_result("image")
-                if image_b64:
-                    metadata["generated_image_b64"] = image_b64
-            if tool_name == "text_to_speech":
-                audio_bytes = pop_media_result("tts")
-                if audio_bytes:
-                    metadata["generated_tts_audio"] = audio_bytes
+                # This result is owned by this agent task, never another user's
+                # concurrent request. Tool-call IDs remain in the LLM transcript.
+                if tool_name == "generate_image":
+                    image_b64 = pop_media_result("image")
+                    if image_b64:
+                        metadata["generated_image_b64"] = image_b64
+                if tool_name == "text_to_speech":
+                    audio_bytes = pop_media_result("tts")
+                    if audio_bytes:
+                        metadata["generated_tts_audio"] = audio_bytes
 
-            messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": str(result)[:4000]})
+                messages.append({"role": "tool", "tool_call_id": tc.get("id", ""), "content": str(result)[:4000]})
 
-        # ── Loop continues — LLM sees tool results ──
+            # ── Loop continues — LLM sees tool results ──
 
-    return "ببخشید، زیاد طول کشید. دوباره امتحان کن.", metadata
+        return "ببخشید، زیاد طول کشید. دوباره امتحان کن.", metadata
