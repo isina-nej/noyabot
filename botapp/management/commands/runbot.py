@@ -2341,7 +2341,15 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         len(images),
     )
     if images and not ask:
-        ask = "این تصویر / استیکر را ببین و پاسخ بده."
+        visible = message
+        if not any(getattr(message, key, None) for key in ("sticker", "animation", "video_note")):
+            visible = getattr(message, "reply_to_message", None) or message
+        if getattr(visible, "video_note", None):
+            ask = "این ویدیو‌مسج را از فریم‌های نمونه بررسی کن؛ نوشته‌ها و گفتارِ قابل تشخیص را دقیق بگو و بخش‌های نامعلوم را حدس نزن."
+        elif getattr(visible, "sticker", None) or getattr(visible, "animation", None):
+            ask = "این استیکر یا GIF را از فریم‌های نمونه ببین، نوشته‌های آن را بخوان و معنی یا حالتش را توضیح بده."
+        else:
+            ask = "این تصویر را بررسی کن، متنِ قابل خواندن داخلش را بگو و توضیح بده."
     from botapp.noya_profile import (
         requests_my_profile_image, my_profile_image,
         requests_replied_profile_image, replied_user_profile_image,
