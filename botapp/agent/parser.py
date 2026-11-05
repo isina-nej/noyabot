@@ -106,6 +106,46 @@ _ENABLE = ("فعال", "روشن", "بذار", "بگذار", "enable", "on")
 _DISABLE = ("غیرفعال", "خاموش", "بردار", "disable", "off")
 
 
+def is_scoped_archive_chat_request(text: str) -> bool:
+    """Keep same-chat message/photo/quote investigations out of admin tools.
+
+    The admin parser and harness do not expose the chat archive/vision/reply
+    catalog. A confident model classifier must not override the fact that an
+    ordinary user asked Noya to read an observed Telegram message. Explicit
+    /agent and «نویا مدیر» requests are handled separately by the router.
+    """
+    t = " ".join(normalize_digits(str(text or "")).replace("\u200c", "").casefold().split())
+    if not t:
+        return False
+    # Do not steal genuine moderation commands, even when they contain a link.
+    if _has_any(
+        t, "بن کن", "بنش کن", "میوت", "سکوت کن", "اخراج", "پاک کن",
+        "حذف کن", "پین کن", "سنجاق کن", "محدود کن", "مسدود کن",
+        "تنظیمات گروه", "آمار مدیریت",
+    ):
+        return False
+    has_message_ref = bool(re.search(
+        r"https?://(?:www\\.)?t\\.me/(?:c/[0-9]+|[a-zA-Z0-9_]{5,32})/[0-9]+",
+        t,
+    ))
+    is_lookup = _has_any(
+        t, "بررسی", "ببین", "بخون", "بخوان", "پیدا کن", "مشخص کن",
+        "واکاوی", "چک کن", "چی گفت", "کی بود", "برای کی", "فرستنده",
+        "مخاطب", "ریپلای", "تگ", "منشن", "از کجا",
+    )
+    if has_message_ref and _has_any(
+        t, "پیام", "عکس", "تصویر", "فال", "استیکر", "کپشن", "لینک",
+    ) and is_lookup:
+        return True
+    # Without a literal link, these are still chat-archive retrievals, not
+    # group analytics or moderation. The actual tool checks authorization.
+    return _has_any(
+        t, "تاریخچه پیام های گروه", "تاریخچه پیام‌های گروه",
+        "آرشیو پیام", "پیاما گروه چی", "پیام‌های قبلی گروه",
+        "فال برای کی بود", "فال رو کی گرفت", "متن داخل عکس",
+    ) and is_lookup
+
+
 def is_message_analysis_request(text: str) -> bool:
     """Detect if the user is asking to analyze/inspect a specific message or text.
 
