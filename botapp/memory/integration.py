@@ -347,6 +347,7 @@ async def run_ai_with_memory(
     telegram_context = {
         "bot": getattr(message, "bot", None),
         "bot_id": int(getattr(getattr(message, "bot", None), "id", 0) or 0),
+        "speaker_user_id": speaker_user_id,
         "chat": chat,
         "chat_id": int(getattr(chat, "id", 0) or 0),
         "chat_type": str(getattr(chat, "type", "") or ""),
