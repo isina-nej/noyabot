@@ -36,6 +36,14 @@ async def should_route_to_agent(
     if not stripped:
         return False
 
+    # Archive/vision/targeted-reply capabilities live in Noya chat, not the
+    # admin/harness catalog. Prevent even a confident Jev verdict from
+    # stealing a Telegram message investigation.
+    from .parser import is_scoped_archive_chat_request
+    if is_scoped_archive_chat_request(stripped):
+        logger.info("route_scoped_archive_chat chat=%s", chat_id)
+        return False
+
     # Classifier disabled: deterministic validation only (offline fallback).
     # This is validation of last resort, not primary selection.
     if not bool(getattr(dj_settings, "AGENT_CLASSIFY_ENABLED", True)):

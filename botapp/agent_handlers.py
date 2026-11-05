@@ -137,12 +137,15 @@ class AgentTriggerFilter(BaseFilter):
                         return False
             return {"agent_command": admin_command}
 
-        # 2) Plain "نویا، …" — JEV-first 4-way routing (model selects the
-        # route; deterministic only validates). Only confident admin/harness
-        # verdicts route to the agent; chat/media/low-confidence stays in
-        # Noya chat where the media/analysis handling applies.
+        # 2) Plain "نویا، …" — JEV-first 4-way routing. Message/photo
+        # archive searches are conversational tasks, not admin/harness jobs.
+        # This guard runs before admin identity checks and the model router.
         command = _strip_prefix(stripped, lowered, _NOYA_PREFIXES)
         if command:
+            from botapp.agent.parser import is_scoped_archive_chat_request
+            if is_scoped_archive_chat_request(command):
+                logger.info("route_archive_message_to_noya_chat")
+                return False
             from botapp.agent.target_chat import extract_explicit_chat_ref
 
             _, remainder = extract_explicit_chat_ref(command)
