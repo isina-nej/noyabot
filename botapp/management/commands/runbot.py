@@ -2370,9 +2370,12 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     except Exception as exc:
         logger.warning("Noya group history unavailable: %s", type(exc).__name__)
         history = ""
-    payload = build_noya_user_payload(
-        message, ask, bot_username=bot_username, archived_context=history,
-    )
+    # build_noya_user_payload may read the opt-in DB archive when the live
+    # group ring and selected history are empty. Keep any ORM access off the
+    # aiogram event loop (SynchronousOnlyOperation regression).
+    payload = await sync_to_async(
+        build_noya_user_payload, thread_sensitive=True,
+    )(message, ask, bot_username=bot_username, archived_context=history)
     if media.context:
         # Untrusted attachment material is provided as data, not as instructions.
         payload += "\n\n" + media.context
