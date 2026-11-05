@@ -1223,23 +1223,38 @@ async def forget_all_memory(message: Message, command: CommandObject):
 
 @router.message(Command("nickname"))
 async def nickname_command(message: Message, command: CommandObject):
-    """Only the authenticated Telegram sender can set their own chat nickname."""
-    from botapp.noya_identity import observe_identity
+    """A reply labels that Telegram user in this group; otherwise self."""
+    from botapp.noya_identity import _nickname_from_text, set_command_nickname
     nickname = action_reason(command).strip()
     if not nickname:
-        await message.reply("لقبت را این‌طور تنظیم کن: /nickname اسم دلخواه")
+        await message.reply(
+            "استفاده: /nickname لقب دلخواه\n"
+            "برای ثبت لقب یک نفر، روی پیام همان شخص ریپلای کن."
+        )
+        return
+    if _nickname_from_text("/nickname " + nickname) != nickname:
+        await message.reply("لقب باید ۲ تا ۶۴ کاراکتر ساده باشد.")
         return
     try:
-        # Parsing and validation share the same self-declaration code path.
-        from botapp.noya_identity import _nickname_from_text
-        if not _nickname_from_text("/nickname " + nickname):
-            await message.reply("لقب باید ۲ تا ۶۴ کاراکتر ساده باشد.")
-            return
-        stored = await sync_to_async(observe_identity, thread_sensitive=True)(message)
-        if stored:
-            await message.reply("لقبت برای همین گفتگو ثبت شد. برای پاک‌کردن /nickname_clear را بفرست.")
+        scope, label = await sync_to_async(
+            set_command_nickname, thread_sensitive=True,
+        )(message, nickname)
+        if scope == "reply":
+            await message.reply(
+                f"لقب «{nickname}» برای «{label}» در همین گروه ثبت شد. "
+                "این لقب را شما تعیین کردی، نه صاحب حساب."
+            )
+        elif scope == "self":
+            await message.reply(
+                "لقبت برای همین گفتگو ثبت شد. برای پاک‌کردن /nickname_clear را بفرست."
+            )
+        elif scope == "invalid_target":
+            await message.reply(
+                "نتوانستم صاحب پیام ریپلای‌شده را از تلگرام تشخیص بدهم. "
+                "روی پیام یک کاربر انسانی در همین گروه ریپلای کن."
+            )
         else:
-            await message.reply("نتوانستم لقب را ثبت کنم.")
+            await message.reply("ثبت لقب ممکن نیست؛ فرستنده یا لقب نامعتبر است.")
     except Exception:
         logger.warning("Nickname save failed", exc_info=True)
         await message.reply("ذخیره لقب فعلاً ممکن نیست.")
@@ -1247,13 +1262,35 @@ async def nickname_command(message: Message, command: CommandObject):
 
 @router.message(Command("nickname_clear"))
 async def nickname_clear_command(message: Message):
-    from botapp.noya_identity import clear_nickname
-    if not getattr(message, "from_user", None):
+    from botapp.noya_identity import clear_nickname, clear_reply_assigned_nickname
+    sender = getattr(message, "from_user", None)
+    if sender is None:
         return
+    reply = getattr(message, "reply_to_message", None)
+    if reply is not None:
+        target = getattr(reply, "from_user", None)
+        reply_chat = getattr(reply, "chat", None)
+        if not (
+            target and not getattr(target, "is_bot", False)
+            and reply_chat and int(reply_chat.id) == int(message.chat.id)
+        ):
+            await message.reply("شناسه صاحب پیام ریپلای‌شده مشخص نیست.")
+            return
+        if int(target.id) != int(sender.id):
+            cleared = await sync_to_async(
+                clear_reply_assigned_nickname, thread_sensitive=True,
+            )(int(message.chat.id), int(target.id), int(sender.id))
+            await message.reply(
+                "لقبی که برای این فرد تعیین کرده بودی پاک شد."
+                if cleared else "لقبی از طرف تو برای این فرد ثبت نشده است."
+            )
+            return
     cleared = await sync_to_async(clear_nickname, thread_sensitive=True)(
-        int(message.chat.id), int(message.from_user.id),
+        int(message.chat.id), int(sender.id),
     )
-    await message.reply("لقب این گفتگو پاک شد." if cleared else "لقبی برای این گفتگو ذخیره نشده بود.")
+    await message.reply(
+        "لقب این گفتگو پاک شد." if cleared else "لقبی برای این گفتگو ذخیره نشده بود."
+    )
 
 
 @router.message(Command("prompt"))
