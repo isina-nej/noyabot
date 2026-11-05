@@ -317,7 +317,24 @@ class ArchiveMiddleware(BaseMiddleware):
                     logger.debug("activity counter failed", exc_info=True)
             if message_archive.archive_enabled():
                 try:
-                    await sync_to_async(message_archive.archive_message, thread_sensitive=True)(event)
+                    current_bot = data.get("bot")
+                    bot_id = int(getattr(current_bot, "id", 0) or 0)
+                    await sync_to_async(message_archive.archive_message, thread_sensitive=True)(
+                        event, bot_id=bot_id,
+                    )
+                    # Telegram provides the original replied-to message in
+                    # the current update. Backfill it when it belongs to the
+                    # same group/topic, including the photo file_id we can
+                    # later re-download with this same bot.
+                    reply = getattr(event, "reply_to_message", None)
+                    reply_chat = getattr(reply, "chat", None)
+                    if (reply is not None and reply_chat is not None
+                            and int(reply_chat.id) == int(event.chat.id)
+                            and int(getattr(reply, "message_thread_id", 0) or 0)
+                            == int(getattr(event, "message_thread_id", 0) or 0)):
+                        await sync_to_async(message_archive.archive_message, thread_sensitive=True)(
+                            reply, bot_id=bot_id,
+                        )
                 except Exception:  # archival must never break message handling
                     logger.debug("message archival failed", exc_info=True)
             # Public names in archived groups; private nickname only by sender request.
