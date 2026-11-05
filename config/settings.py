@@ -183,6 +183,13 @@ NOYA_ARCHIVE_MEDIA_ENRICHMENT_ENABLED = os.getenv("NOYA_ARCHIVE_MEDIA_ENRICHMENT
 NOYA_ARCHIVE_VIDEO_VISION_ENABLED = os.getenv("NOYA_ARCHIVE_VIDEO_VISION_ENABLED", "false").lower() in _TRUE
 
 
+# Public HTTPS form origins, e.g. https://nuya.nodia.ir for the staff inbox.
+CSRF_TRUSTED_ORIGINS = [
+    item.strip()
+    for item in os.getenv("CSRF_TRUSTED_ORIGINS", "").split(",")
+    if item.strip()
+]
+
 SESSION_COOKIE_SECURE = not DEBUG
 CSRF_COOKIE_SECURE = not DEBUG
 SECURE_CONTENT_TYPE_NOSNIFF = True
