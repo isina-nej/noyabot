@@ -78,7 +78,6 @@ class NoyaChatActionTests(SimpleTestCase):
         async def scenario():
             msg = _message()
             async with show_chat_action(msg):
-                outer = await asyncio.current_task()
                 async with show_chat_action(msg, "record_voice") as nested:
                     self.assertEqual(nested.action, "record_voice")
                     await set_active_chat_action("upload_voice")
