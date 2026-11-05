@@ -14,6 +14,23 @@ _REPLY_STICKER = frozenset({"استیکر", "استیکرش کن", "استیکر
 _SHORT = re.compile(r"\s+")
 
 
+_COMPOSITE_VOICE = re.compile(r"ویس|ویسی|وویس|صوت|صدا|voice|tts", re.I)
+_COMPOSITE_IMAGE = re.compile(r"عکس|تصویر|نقاشی|image|photo|picture|draw", re.I)
+_COMPOSITE_STEPS = re.compile(r"پیام\\s*(?:اول|دوم|سوم|چهارم|1|2|3|4)|بعدش?|سپس|در ادامه", re.I)
+_CONTENT_TO_COMPOSE = re.compile(r"شعر|متن|داستان|قصه|پیدا کن|رندوم|انتخاب کن|تولید کن", re.I)
+
+
+def requires_agent_mixed_media(text: str) -> bool:
+    """Do not flatten a multi-stage creative request into one direct TTS/photo."""
+    ask = str(text or "").strip()
+    voice, image = bool(_COMPOSITE_VOICE.search(ask)), bool(_COMPOSITE_IMAGE.search(ask))
+    if voice and image:
+        return True
+    if (voice or image) and _COMPOSITE_STEPS.search(ask) and _CONTENT_TO_COMPOSE.search(ask):
+        return True
+    return False
+
+
 def classify_reply_command(ask: str, *, has_reply: bool) -> str | None:
     """Route only explicit short commands, never broad word inclusion."""
     if not has_reply:
