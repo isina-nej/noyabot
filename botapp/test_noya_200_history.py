@@ -7,8 +7,8 @@ from django.test import TestCase, override_settings
 from botapp.models import MessageSnapshot, NoyaObservedIdentity
 from botapp.noya_history import archived_context_for_message
 from botapp.noya_identity import (
-    _nickname_from_text, clear_nickname, nickname_context_for_message,
-    observe_identity,
+    _nickname_from_text, clear_nickname, clear_reply_assigned_nickname,
+    nickname_context_for_message, observe_identity, set_command_nickname,
 )
 from botapp.noya_archive_media import save_prepared_media
 
@@ -51,7 +51,7 @@ class NoyaHistoryTests(TestCase):
     def test_scans_200_but_selects_relevant_subset(self):
         body = archived_context_for_message(_message(), "قاصدک آزمایش")
         self.assertIn("آزمایش قاصدک", body)
-        self.assertIn("لقب اعلام‌شده: قاصدک", body)
+        self.assertIn("لقب اعلام‌شده توسط خودش: قاصدک", body)
         self.assertIn("GROUP_HISTORY_UNTRUSTED", body)
         self.assertLessEqual(body.count("user_id="), 30)
         self.assertLess(len(body), 12000)
@@ -114,6 +114,72 @@ class NoyaIdentityTests(TestCase):
         self.assertTrue(clear_nickname(-1001, 33))
         row.refresh_from_db()
         self.assertEqual(row.nickname, "")
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True)
+    def test_reply_nickname_applies_to_target_not_sender(self):
+        actor = _message(text="/nickname بتول", first_name="سینا", last_name="حسینی")
+        target = _message(message_id=30, text="سلام", first_name="بتول", last_name="احمدی")
+        target.from_user.id = 44
+        target.from_user.username = "batool"
+        actor.reply_to_message = target
+        # Outer middleware runs before the command handler.
+        observe_identity(actor)
+        self.assertEqual(
+            NoyaObservedIdentity.objects.get(chat_id=-1001, user_id=33).nickname, "",
+        )
+        scope, name = set_command_nickname(actor, "بتول")
+        self.assertEqual((scope, name), ("reply", "بتول احمدی"))
+        row = NoyaObservedIdentity.objects.get(chat_id=-1001, user_id=44)
+        self.assertEqual(row.assigned_nickname, "بتول")
+        self.assertEqual(row.assigned_nickname_by, 33)
+        self.assertEqual(row.first_name, "بتول")
+        self.assertEqual(row.last_name, "احمدی")
+        self.assertEqual(row.nickname, "")
+        self.assertIn("group_assigned_nickname", nickname_context_for_message(target))
+        self.assertTrue(clear_reply_assigned_nickname(-1001, 44, 33))
+        row.refresh_from_db()
+        self.assertEqual(row.assigned_nickname, "")
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True)
+    def test_reply_does_not_override_targets_self_chosen_nickname(self):
+        target = _message(message_id=20, first_name="نگار")
+        target.from_user.id = 44
+        target.from_user.username = "negar"
+        NoyaObservedIdentity.objects.create(
+            chat_id=-1001, user_id=44, nickname="خودم", first_name="نگار",
+        )
+        cmd = _message(text="/nickname بتول")
+        cmd.reply_to_message = target
+        self.assertEqual(set_command_nickname(cmd, "بتول")[0], "reply")
+        row = NoyaObservedIdentity.objects.get(chat_id=-1001, user_id=44)
+        self.assertEqual(row.nickname, "خودم")
+        self.assertEqual(row.assigned_nickname, "بتول")
+
+    @override_settings(MESSAGE_ARCHIVE_ENABLED=True)
+    def test_invalid_reply_target_is_not_silently_treated_as_self(self):
+        actor = _message(text="/nickname بتول")
+        actor.reply_to_message = _message(chat_id=-555, message_id=10)
+        self.assertEqual(set_command_nickname(actor, "بتول")[0], "invalid_target")
+        self.assertFalse(NoyaObservedIdentity.objects.exists())
+        actor.reply_to_message = SimpleNamespace(from_user=None, chat=actor.chat)
+        self.assertEqual(set_command_nickname(actor, "بتول")[0], "invalid_target")
+
+    def test_unrelated_member_cannot_clear_reply_assignment(self):
+        target = _message(message_id=10)
+        target.from_user.id = 44
+        cmd = _message(text="/nickname بتول")
+        cmd.reply_to_message = target
+        set_command_nickname(cmd, "بتول")
+        self.assertFalse(clear_reply_assigned_nickname(-1001, 44, 777))
+        self.assertTrue(clear_reply_assigned_nickname(-1001, 44, 33))
+
+    def test_command_without_reply_sets_own_nickname(self):
+        scope, _ = set_command_nickname(_message(text="/nickname سینا"), "سینا")
+        self.assertEqual(scope, "self")
+        self.assertEqual(
+            NoyaObservedIdentity.objects.get(chat_id=-1001, user_id=33).nickname,
+            "سینا",
+        )
 
     @override_settings(MESSAGE_ARCHIVE_ENABLED=False)
     def test_no_silent_group_profile_collection(self):
