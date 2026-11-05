@@ -16,7 +16,7 @@ _SHORT = re.compile(r"\s+")
 
 _COMPOSITE_VOICE = re.compile(r"ویس|ویسی|وویس|صوت|صدا|voice|tts", re.I)
 _COMPOSITE_IMAGE = re.compile(r"عکس|تصویر|نقاشی|image|photo|picture|draw", re.I)
-_COMPOSITE_STEPS = re.compile(r"پیام\\s*(?:اول|دوم|سوم|چهارم|1|2|3|4)|بعدش?|سپس|در ادامه", re.I)
+_COMPOSITE_STEPS = re.compile(r"پیام\s*(?:اول|دوم|سوم|چهارم|1|2|3|4)|بعدش?|سپس|در ادامه", re.I)
 _CONTENT_TO_COMPOSE = re.compile(r"شعر|متن|داستان|قصه|پیدا کن|رندوم|انتخاب کن|تولید کن", re.I)
 
 
