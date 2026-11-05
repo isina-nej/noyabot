@@ -196,7 +196,7 @@ class ArchivedAnimatedMediaTests(TestCase):
         self.assertIn("ثبت نشده", denied)
         self.assertNotIn("confidential group text", denied)
         self.assertIn("Error", _read(_scope(bot=_bot()), ref="https://t.me/c/1231231230/120"))
-        self.assertIn("ثبت نشده", _read(_scope(bot=_bot(), thread=88))
+        self.assertIn("ثبت نشده", _read(_scope(bot=_bot(), thread=88)))
 
     def test_oversize_remote_file_not_downloaded(self):
         archive_message(_message("animation"), bot_id=BOT)
