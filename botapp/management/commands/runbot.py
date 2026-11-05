@@ -631,7 +631,7 @@ async def _deliver_noya_queued_messages(message: Message, metadata: dict) -> boo
         mode = item.get("reply_to", "current")
         if (not isinstance(text, str) or not text.strip()
                 or len(text) > MAX_CHAT_MESSAGE_CHARS
-                or mode not in ("current", "previous", "none")):
+                or mode not in ("current", "previous", "none", "archived")):
             continue
 
         kwargs = {"chat_id": message.chat.id, "text": text.strip(), "parse_mode": None}
@@ -651,6 +651,29 @@ async def _deliver_noya_queued_messages(message: Message, metadata: dict) -> boo
                 message_id=last_sent_id,
                 allow_sending_without_reply=True,
             )
+        elif mode == "archived":
+            # Only the scoped archive tool can generate this verified envelope.
+            # No arbitrary chat ID, raw message ID or mention target is accepted
+            # directly from the LLM schema.
+            if item.get("verified_group_reply") is not True:
+                continue
+            try:
+                target = int(item.get("target_message_id") or 0)
+                mentioned = int(item.get("mention_user_id") or 0)
+            except (TypeError, ValueError):
+                continue
+            if not 0 < target < int(message.message_id):
+                continue
+            kwargs["reply_parameters"] = ReplyParameters(
+                message_id=target, allow_sending_without_reply=False,
+            )
+            if mentioned > 0:
+                label = escape(str(item.get("mention_label") or "دوست عزیز")[:70])
+                kwargs["text"] = (
+                    f'<a href="tg://user?id={mentioned}">{label}</a> '
+                    + escape(text.strip())
+                )
+                kwargs["parse_mode"] = "HTML"
         try:
             delivered = await message.bot.send_message(**kwargs)
         except Exception as exc:
