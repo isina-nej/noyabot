@@ -124,7 +124,9 @@ def archived_context_for_message(message, query: str) -> str:
                 name += " (لقب گروهی: " + group_name[:64] + ")"
         username = (" @" + row.sender_username[:64]) if row.sender_username else ""
         text = _record_text(row)
-        line = f"#{row.message_id} user_id={row.sender_user_id or '-'} {name}{username}: {text}\n"
+        meta = row.metadata if isinstance(row.metadata, dict) else {}
+        link = str(meta.get("telegram_link") or "")[:160]
+        line = f"#{row.message_id} link={link or '-'} user_id={row.sender_user_id or '-'} {name}{username}: {text}\n"
         if len(line) > remaining:
             break
         output.append(line)

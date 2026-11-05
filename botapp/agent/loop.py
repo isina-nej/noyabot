@@ -170,6 +170,7 @@ async def run_agent_loop(
     social_context: dict | None = None,
     reaction_allowed: bool = False,
     silence_allowed: bool = False,
+    telegram_context: dict | None = None,
     on_token=None,
 ) -> tuple[str, dict]:
     """Run the Hermes-style agent loop.

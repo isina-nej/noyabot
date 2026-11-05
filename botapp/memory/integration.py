@@ -340,7 +340,23 @@ async def run_ai_with_memory(
     from botapp.noya_reactions import reaction_eligible
     from botapp.noya_silence import silence_eligible
     social_context = trusted_social_context(message)
+    chat = getattr(message, "chat", None)
+    reply = getattr(message, "reply_to_message", None)
+    # Internal capability supplied by the authenticated aiogram update. Never
+    # derive group access or the bot identity from the model's prompt.
+    telegram_context = {
+        "bot": getattr(message, "bot", None),
+        "bot_id": int(getattr(getattr(message, "bot", None), "id", 0) or 0),
+        "speaker_user_id": speaker_user_id,
+        "chat": chat,
+        "chat_id": int(getattr(chat, "id", 0) or 0),
+        "chat_type": str(getattr(chat, "type", "") or ""),
+        "thread_id": int(getattr(message, "message_thread_id", 0) or 0),
+        "current_message_id": int(getattr(message, "message_id", 0) or 0),
+        "reply_to_message_id": int(getattr(reply, "message_id", 0) or 0),
+    }
     kwargs = {
+        "telegram_context": telegram_context,
         "speaker_user_id": speaker_user_id,
         "speaker_name": speaker_name,
         "images": images,
