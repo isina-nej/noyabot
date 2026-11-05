@@ -6,6 +6,7 @@ from aiogram import F, Router, types
 from aiogram.dispatcher.event.bases import SkipHandler
 from aiogram.exceptions import TelegramBadRequest
 from aiogram.types import InlineQueryResultArticle, InputTextMessageContent
+from asgiref.sync import sync_to_async
 
 from botapp.channel_insights import (
     ChannelInsightUnavailable,
@@ -171,7 +172,9 @@ async def channel_nouya_handler(message: types.Message):
             await _send_channel_answer(progress, unavailable.user_message())
             return
 
-    payload = build_noya_user_payload(message, question, bot_username=bot_user.username or "")
+    payload = await sync_to_async(
+        build_noya_user_payload, thread_sensitive=True,
+    )(message, question, bot_username=bot_user.username or "")
     progress = await message.reply("یک لحظه…")
     answer, _meta = await run_ai_with_memory(
         message,
@@ -296,7 +299,9 @@ async def nouya_mention_handler(message: types.Message):
         if is_other_bot_sender(message, self_bot_id=int(bot_user.id)):
             if not allow_bot_to_bot_reply(int(message.chat.id), int(message.from_user.id)):
                 return
-        payload = build_noya_user_payload(
+        payload = await sync_to_async(
+            build_noya_user_payload, thread_sensitive=True,
+        )(
             message,
             question,
             bot_username=bot_user.username or "",
