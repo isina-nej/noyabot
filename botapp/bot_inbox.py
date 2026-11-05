@@ -43,10 +43,11 @@ def payload_from_message(message, bot_id: int) -> dict:
              str(getattr(sender, "full_name", "") or getattr(chat, "full_name", "") or ""))
     reply = getattr(message, "reply_to_message", None)
     kind = get_content_type(message)
+    from botapp.message_archive import scoped_message_thread_id
     return {
         "chat_type": chat_type[:32],
         "chat_title": title[:255],
-        "thread_id": int(getattr(message, "message_thread_id", None) or 0),
+        "thread_id": scoped_message_thread_id(message),
         "sender_user_id": int(sender.id) if sender is not None else None,
         "sender_name": str(getattr(sender, "full_name", "") or
                            getattr(sender_chat, "title", "") or "")[:255],
