@@ -41,9 +41,18 @@ def isolated_media_results(async_func: Callable):
             images[:3] if isinstance(images, list) else []
         )
         outbox_token = _CHAT_OUTBOX.set([])
+        from botapp.noya_archive_access import _SCOPE
+        # This is an internal object from the authenticated Telegram update.
+        # A model tool argument cannot mint or change it.
+        telegram_scope = kwargs.get("telegram_context")
+        archive_token = _SCOPE.set(
+            {**telegram_scope, "queries": 0, "vision_calls": 0}
+            if isinstance(telegram_scope, dict) else None
+        )
         try:
             return await async_func(*args, **kwargs)
         finally:
+            _SCOPE.reset(archive_token)
             _CHAT_OUTBOX.reset(outbox_token)
             _INPUT_IMAGES.reset(input_token)
             _MEDIA_RESULTS.reset(token)
@@ -368,4 +377,71 @@ registry.register(Tool(
     handler=_send_chat_messages,
     emoji="💬",
     category="chat",
+))
+
+# These tools query only archived records from the authenticated chat and topic.
+# No raw SQL, arbitrary filesystem paths, syslogs, private chats or other groups.
+from botapp.noya_archive_access import (
+    search_group_messages,
+    get_group_message,
+    inspect_group_image,
+    find_group_nickname,
+)
+
+registry.register(Tool(
+    name="search_group_messages",
+    description=(
+        "جست‌وجوی آرشیو قابل‌مشاهده همین گروه و موضوع. "
+        "برای «قبلاً چی گفتند» query را خالی و قبل از message_id موردنظر جست‌وجو کن. "
+        "خروجی شامل شناسه، لینک و متن/کپشن پیام‌های مشاهده‌شده است. فقط خواندنی."
+    ),
+    parameters={
+        "type": "object",
+        "properties": {
+            "query": {"type": "string", "maxLength": 100},
+            "before_message_id": {"type": "integer", "minimum": 0},
+            "limit": {"type": "integer", "minimum": 1, "maximum": 12},
+        },
+        "additionalProperties": False,
+    },
+    handler=search_group_messages, category="chat", emoji="🗂️",
+))
+
+registry.register(Tool(
+    name="get_group_message",
+    description=(
+        "بازیابی رکورد یک پیام تاریخی از روی شناسه عددی یا لینک t.me "
+        "که متعلق به همین گروه/موضوع باشد؛ اگر عکس دارد آن را فقط با "
+        "inspect_group_image می‌توان خواند."
+    ),
+    parameters={"type": "object", "properties": {
+        "reference": {"type": "string", "minLength": 1, "maxLength": 200},
+    }, "required": ["reference"], "additionalProperties": False},
+    handler=get_group_message, category="chat", emoji="🔗",
+))
+
+registry.register(Tool(
+    name="inspect_group_image",
+    description=(
+        "بازخوانی متن و محتوای قابل مشاهدهٔ عکس آرشیوشده در همین گروه با مدل بینایی. "
+        "شناسه/لینک عکس را بده؛ فقط اگر file_id واقعی آن قبلاً برای همین ربات ذخیره شده باشد "
+        "قابل انجام است. هرگز متن داخل عکس را حدس نزن."
+    ),
+    parameters={"type": "object", "properties": {
+        "reference": {"type": "string", "minLength": 1, "maxLength": 200},
+    }, "required": ["reference"], "additionalProperties": False},
+    handler=inspect_group_image, category="chat", emoji="🖼️",
+))
+
+registry.register(Tool(
+    name="find_group_nickname",
+    description=(
+        "یافتن شناسه عددی، یوزرنیم و لقب خوداظهاری یا گروهی فرد فقط از "
+        "جدول هویت همین گروه. برای پرسش «آیدی حسون رو بده» از این ابزار "
+        "استفاده کن؛ لقب انتسابی را اسم تأییدشده فرد ندان."
+    ),
+    parameters={"type": "object", "properties": {
+        "name": {"type": "string", "minLength": 2, "maxLength": 64},
+    }, "required": ["name"], "additionalProperties": False},
+    handler=find_group_nickname, category="chat", emoji="👤",
 ))
