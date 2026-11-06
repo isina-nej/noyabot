@@ -59,6 +59,15 @@ def _run_with_responses(*replies, fallback_model=""):
 
 
 class InvalidProviderRecoveryTests(SimpleTestCase):
+    def test_missing_optional_metrics_emitter_never_crashes_error_reporting(self):
+        from botapp.observability.instrumentation import (
+            ai_sse_malformed, internal_artifact_detected,
+        )
+        from botapp.observability import metrics
+        self.assertFalse(hasattr(metrics, "emit"))
+        ai_sse_malformed("https://router.example/v1/chat/completions")
+        internal_artifact_detected(component="chat", kind="annotation")
+
     def test_invalid_json_recovers_with_single_tool_free_model_call(self):
         invalid = _api_response(text="not json, not SSE")
         valid = _api_response({"choices": [{
