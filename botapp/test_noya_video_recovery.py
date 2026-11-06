@@ -40,13 +40,13 @@ def _api_response(data=None, *, text=None):
     )
 
 
-def _run_with_responses(*replies):
+def _run_with_responses(*replies, fallback_model=""):
     with patch.dict(os.environ, {
         "NOYA_API_URL": "https://router.example/chat/completions",
         "NOYA_API_KEY": "test-credential",
         "NOYA_MODEL": "noya-chat",
         "NOYA_TOOL_MODEL": "noya-chat",
-        "NOYA_CHAT_FALLBACK_MODEL": "",
+        "NOYA_CHAT_FALLBACK_MODEL": fallback_model,
     }), patch(
         "botapp.agent.loop.httpx.AsyncClient.post",
         new=AsyncMock(side_effect=replies),
@@ -85,10 +85,12 @@ class InvalidProviderRecoveryTests(SimpleTestCase):
     def test_invalid_message_gets_one_retry_with_configured_model(self):
         invalid = _api_response({"choices": [{"message": None}]})
         valid = _api_response({"choices": [{"message": {"content": "پاسخ جایگزین"}}]})
-        with patch.dict(os.environ, {"NOYA_CHAT_FALLBACK_MODEL": "alternative"}):
-            reply, meta, calls = _run_with_responses(invalid, valid)
+        reply, meta, calls = _run_with_responses(
+            invalid, valid, fallback_model="alternative",
+        )
         self.assertEqual(reply, "پاسخ جایگزین")
         self.assertEqual(len(calls), 2)
+        self.assertEqual(calls[1].kwargs["json"]["model"], "alternative")
 
     def test_does_not_expose_reasoning_only_retry(self):
         invalid = _api_response({"choices": []})
