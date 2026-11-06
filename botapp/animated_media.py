@@ -51,10 +51,10 @@ def _mjpeg_frames(data: bytes) -> list[bytes]:
     frames: list[bytes] = []
     cursor = 0
     while cursor < len(data):
-        start = data.find(b"\\xff\\xd8", cursor)
+        start = data.find(b"\xff\xd8", cursor)
         if start < 0:
             break
-        end = data.find(b"\\xff\\xd9", start + 2)
+        end = data.find(b"\xff\xd9", start + 2)
         if end < 0:
             break
         frame = data[start:end + 2]
