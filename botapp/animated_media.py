@@ -41,17 +41,54 @@ async def _communicate(argv: list[str], raw: bytes, *, timeout: int) -> bytes:
     return out
 
 
-async def _video_to_apng(raw: bytes) -> bytes:
-    """Decode the first six seconds, up to 18 frames, without invoking a shell."""
-    return await _communicate(
+def _mjpeg_frames(data: bytes) -> list[bytes]:
+    """Parse bounded MJPEG image2pipe output; never treat video as a PNG.
+
+    ffmpeg's APNG-on-stdout output can be non-conformant; Pillow then opens
+    it as a single default PNG frame. Extract actual JPEG frame boundaries
+    instead, checking that every frame is complete and not oversized.
+    """
+    frames: list[bytes] = []
+    cursor = 0
+    while cursor < len(data):
+        start = data.find(b"\\xff\\xd8", cursor)
+        if start < 0:
+            break
+        end = data.find(b"\\xff\\xd9", start + 2)
+        if end < 0:
+            break
+        frame = data[start:end + 2]
+        if len(frame) > 3_500_000:
+            raise RuntimeError("Oversized sampled video frame")
+        frames.append(frame)
+        if len(frames) > 18:
+            raise RuntimeError("Too many decoded frames")
+        cursor = end + 2
+    if not frames or cursor != len(data):
+        raise RuntimeError("Invalid or incomplete MJPEG frame stream")
+    return frames
+
+
+async def _video_to_frames(raw: bytes) -> list[tuple[str, bytes]]:
+    """Decode first six seconds to real JPEGs, selecting first/middle/last.
+
+    Bounded ffmpeg subprocess with no shell, no disk files and at most 18
+    frames at 512px. Sampling directly into MJPEG avoids broken APNG pipes.
+    """
+    stream = await _communicate(
         [
             "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
             "-i", "pipe:0", "-t", "6", "-an",
             "-vf", "fps=3,scale=512:-2:flags=lanczos",
-            "-f", "apng", "pipe:1",
+            "-frames:v", "18", "-f", "image2pipe",
+            "-vcodec", "mjpeg", "pipe:1",
         ],
         raw, timeout=_RENDER_TIMEOUT_SECONDS,
     )
+    decoded = _mjpeg_frames(stream)
+    return [("image/jpeg", decoded[index]) for index in (
+        sorted({0, (len(decoded) - 1) // 2, len(decoded) - 1})
+    )]
 
 
 async def sample_animation_frames(raw: bytes, *, kind: str) -> list[tuple[str, bytes]]:
@@ -66,8 +103,7 @@ async def sample_animation_frames(raw: bytes, *, kind: str) -> list[tuple[str, b
     if not raw or len(raw) > MAX_ANIMATION_BYTES:
         raise ValueError("Animation exceeds the maximum input size")
     if kind == "video":
-        raw = await _video_to_apng(raw)
-        kind = "image"
+        return await _video_to_frames(raw)
     out = await _communicate(
         [sys.executable, "-m", "botapp.tgs_renderer", kind],
         raw, timeout=_RENDER_TIMEOUT_SECONDS,
