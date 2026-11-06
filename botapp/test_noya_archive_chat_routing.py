@@ -50,6 +50,22 @@ class ArchiveRoutingTests(TestCase):
             "نویا پیام https://t.me/c/3861069387/93687 رو پین کن"
         ))
 
+    def test_animated_media_archive_links_stay_on_chat_route(self):
+        samples = (
+            "نویا گیف https://t.me/c/3861069387/93764 رو بخون",
+            "نویا ویدیومسیج https://t.me/c/3861069387/93764 رو ببین",
+            "نویا متن روی استیکر https://t.me/c/3861069387/93764 چی نوشته",
+            "نویا متن توی ویدیومسیج چی میگه",
+            "نویا گیف چی نوشته؟",
+        )
+        for prompt in samples:
+            with self.subTest(prompt=prompt):
+                self.assertTrue(is_scoped_archive_chat_request(prompt))
+        # Never steal a real admin action targeting a historical message.
+        self.assertFalse(is_scoped_archive_chat_request(
+            "نویا گیف https://t.me/c/3861069387/93764 رو حذف کن"
+        ))
+
     def test_classifier_never_asks_jev_to_route_archive_investigation(self):
         with patch(
             "botapp.agent.route_classifier.classify_request",
