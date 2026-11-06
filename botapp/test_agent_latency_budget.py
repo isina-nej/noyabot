@@ -178,11 +178,13 @@ class AgentLatencyBudgetTests(SimpleTestCase):
         class EmptyResponse(_Response):
             def __init__(self):
                 self.body = {"choices": []}
-        client = _Client([EmptyResponse()])
+        client = _Client([EmptyResponse(), EmptyResponse()])
         with patch("botapp.agent.loop.httpx.AsyncClient", return_value=client):
             reply, metadata = _ask()
         self.assertIn("خطا در پردازش پاسخ", reply)
         self.assertEqual(metadata, {})
+        self.assertEqual(client.post.await_count, 2)
+        self.assertNotIn("tools", client.post.await_args.kwargs["json"])
 
     def test_optional_reasoning_effort_added_when_configured(self):
         client = _Client([_Response({"role": "assistant", "content": "سلام!"})])

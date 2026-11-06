@@ -137,6 +137,83 @@ def _parse_sse_stream(raw: str) -> dict | None:
     }
 
 
+async def _recover_malformed_chat_reply(
+    client, api_url: str, headers: dict, original_payload: dict,
+    *, original_reason: str, iteration: int,
+) -> str:
+    """Bounded tool-free fallback for HTTP-200 responses with invalid schemas.
+
+    Only the *first* provider turn may recover this way, before any tools
+    have been executed. No tools are available in the retry and no model
+    planning or reasoning text can be shown. Uses the same conversation
+    and current authorized model unless a fallback model was configured.
+    """
+    if iteration != 0:
+        return ""
+    payload = {
+        key: value for key, value in original_payload.items()
+        if key not in {"tools", "tool_choice", "parallel_tool_calls"}
+    }
+    model = str(os.getenv("NOYA_CHAT_FALLBACK_MODEL") or payload["model"]).strip()
+    if not model:
+        return ""
+    payload["model"] = model
+    # Tool schema incompatibilities can yield a 200 with an unusable body;
+    # allow one cheaper, tool-free request rather than repeating the error.
+    logger.warning(
+        "[NOYA-AGENT] stage=provider_recovery trigger=%s mode=tool_free model=%s",
+        original_reason, model,
+    )
+    started = time.perf_counter()
+    try:
+        response = await client.post(api_url, json=payload, headers=headers)
+        response.raise_for_status()
+        raw = str(getattr(response, "text", "") or "").strip()
+        if not raw:
+            raise ValueError("empty_body")
+        try:
+            data = response.json()
+        except (ValueError, TypeError):
+            data = _parse_sse_stream(raw)
+        if not isinstance(data, dict):
+            raise ValueError("invalid_envelope")
+        choices = data.get("choices")
+        if not isinstance(choices, list) or not choices:
+            raise ValueError("missing_choices")
+        msg = choices[0].get("message") if isinstance(choices[0], dict) else None
+        if not isinstance(msg, dict) or msg.get("tool_calls"):
+            raise ValueError("invalid_message")
+        output = msg.get("content")
+        if isinstance(output, str):
+            visible = output
+        elif isinstance(output, list):
+            visible = " ".join(
+                part.get("text", "") for part in output
+                if isinstance(part, dict)
+                and part.get("type", "text") in {"text", "output_text"}
+                and isinstance(part.get("text"), str)
+            )
+        else:
+            visible = ""
+        clean = sanitize_outgoing_text(visible)
+        if not clean:
+            raise ValueError("empty_visible_content")
+        logger.info(
+            "[NOYA-AGENT] stage=provider_recovery result=ok model=%s "
+            "latency_ms=%.0f chars=%d",
+            model, (time.perf_counter() - started) * 1000, len(clean),
+        )
+        return clean
+    except (httpx.HTTPError, ValueError, TypeError, IndexError, KeyError) as exc:
+        logger.warning(
+            "[NOYA-AGENT] stage=provider_recovery result=failed model=%s "
+            "error_type=%s latency_ms=%.0f",
+            model, type(exc).__name__,
+            (time.perf_counter() - started) * 1000,
+        )
+        return ""
+
+
 async def _dispatch_observed(tool_name: str, args: dict):
     started = time.perf_counter()
     try:
@@ -329,16 +406,32 @@ async def run_agent_loop(
                         status="malformed", model=tool_model, http_status=resp.status_code,
                     )
                     ai_sse_malformed(api_url)
-                    logger.error("[NOYA-AGENT] Unparseable provider response status=%s bytes=%d", resp.status_code, len(text))
-                    return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
+                    logger.error(
+                        "[NOYA-AGENT] stage=provider_parse result=unparseable "
+                        "status=%s bytes=%d model=%s",
+                        resp.status_code, len(text), tool_model,
+                    )
+                    recovered = await _recover_malformed_chat_reply(
+                        client, api_url, headers, payload,
+                        original_reason="unparseable", iteration=iteration,
+                    )
+                    return (recovered or "خطا در پردازش پاسخ هوش مصنوعی."), metadata
 
             if not isinstance(data, dict) or not isinstance(data.get("choices"), list) or not data["choices"]:
                 ai_provider_request_end(
                     duration_ms=(time.perf_counter() - request_started) * 1000,
                     status="invalid_response", model=tool_model, http_status=resp.status_code,
                 )
-                logger.warning("[NOYA-AGENT] AI provider returned no choices")
-                return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
+                logger.warning(
+                    "[NOYA-AGENT] stage=provider_parse result=missing_choices "
+                    "status=%s model=%s",
+                    resp.status_code, tool_model,
+                )
+                recovered = await _recover_malformed_chat_reply(
+                    client, api_url, headers, payload,
+                    original_reason="missing_choices", iteration=iteration,
+                )
+                return (recovered or "خطا در پردازش پاسخ هوش مصنوعی."), metadata
 
             choice = data["choices"][0]
             if not isinstance(choice, dict) or not isinstance(choice.get("message"), dict):
@@ -346,8 +439,16 @@ async def run_agent_loop(
                     duration_ms=(time.perf_counter() - request_started) * 1000,
                     status="invalid_response", model=tool_model, http_status=resp.status_code,
                 )
-                logger.warning("[NOYA-AGENT] AI provider returned invalid message")
-                return "خطا در پردازش پاسخ هوش مصنوعی.", metadata
+                logger.warning(
+                    "[NOYA-AGENT] stage=provider_parse result=invalid_message "
+                    "status=%s model=%s",
+                    resp.status_code, tool_model,
+                )
+                recovered = await _recover_malformed_chat_reply(
+                    client, api_url, headers, payload,
+                    original_reason="invalid_message", iteration=iteration,
+                )
+                return (recovered or "خطا در پردازش پاسخ هوش مصنوعی."), metadata
 
             msg = choice["message"]
             finish = choice.get("finish_reason", "")
