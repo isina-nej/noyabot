@@ -152,7 +152,7 @@ class AnimatedVisionTest(SimpleTestCase):
         Image.new("RGB", (12, 12), "blue").save(b, format="JPEG")
         samples = _mjpeg_frames(a.getvalue() + b.getvalue())
         self.assertEqual(len(samples), 2)
-        self.assertTrue(all(x.startswith(b"\\xff\\xd8") for x in samples))
+        self.assertTrue(all(x.startswith(b"\xff\xd8") for x in samples))
         with self.assertRaises(RuntimeError):
             _mjpeg_frames(a.getvalue() + b.getvalue()[:-2])
 
