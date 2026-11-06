@@ -237,6 +237,28 @@ class ArchivedAnimatedMediaTests(TestCase):
             self.assertEqual(gif, mock_frame)
             self.assertEqual(renderer.await_args.kwargs["kind"], "image")
 
+    def test_video_note_failed_sampling_uses_honest_single_preview_and_stt(self):
+        output = io.BytesIO()
+        Image.new("RGB", (16, 16), "yellow").save(output, format="JPEG")
+        message = _message("video_note")
+        with patch(
+            "botapp.animated_media.sample_animation_frames",
+            new=AsyncMock(side_effect=RuntimeError("invalid video container")),
+        ), patch(
+            "botapp.media_intake._ffmpeg",
+            new=AsyncMock(side_effect=[output.getvalue(), b"audio-mp3"]),
+        ) as ffmpeg, patch(
+            "botapp.media_intake.transcribe_audio",
+            new=AsyncMock(return_value="گفتار همچنان خوانده شد"),
+        ):
+            prepared = async_to_sync(prepare_media_for_noya)(
+                _bot(b"video-note"), message, include_reply=False,
+            )
+        self.assertEqual(len(prepared.images), 1)
+        self.assertIn("گفتار", prepared.transcript)
+        self.assertTrue(any("فقط یک فریم" in x for x in prepared.warnings))
+        self.assertEqual(ffmpeg.await_count, 2)
+
     def test_live_video_note_uses_three_frames_and_stt(self):
         image = io.BytesIO()
         Image.new("RGB", (16, 16), "blue").save(image, format="JPEG")
