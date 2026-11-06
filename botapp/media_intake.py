@@ -287,10 +287,13 @@ async def prepare_media_for_noya(bot, message, *, include_reply: bool = True) ->
                         try:
                             frames = [data for _mime, data in
                                       await sample_animation_frames(raw, kind="video")]
-                        except (RuntimeError, ValueError, OSError):
-                            logger.info(
-                                "[NOYA-ANIMATION] stage=video_note_frames result=sample_failed "
-                                "fallback=single_frame"
+                        except (RuntimeError, ValueError, OSError) as exc:
+                            logger.warning(
+                                "[NOYA-ANIMATION] stage=video_note_frames "
+                                "result=sample_failed code=%s error_type=%s "
+                                "fallback=single_frame",
+                                str(getattr(exc, "code", "") or "decoder_error")[:48],
+                                type(exc).__name__,
                             )
                             frames = []
                     elif os.getenv("NOYA_VIDEO_SAMPLE_FRAMES", "false").lower() in {"1", "true", "yes", "on"}:
@@ -320,6 +323,24 @@ async def prepare_media_for_noya(bot, message, *, include_reply: bool = True) ->
                 raw = await _ffmpeg(raw, frame=False)
                 suffix, mime = ".mp3", "audio/mpeg"
             transcript = await transcribe_audio(raw, suffix=suffix, mime=mime)
+            # An ordinary Telegram circular video note lasts at most about a
+            # minute. A several-hundred-word "speech" from a short note can
+            # indicate hallucinated STT output. Compare only when Telegram
+            # actually supplied a positive duration; never guess duration.
+            duration = int(getattr(obj, "duration", 0) or 0)
+            if (kind == "video" and is_video_note and duration > 0
+                    and transcript and
+                    len(transcript.split()) > max(75, duration * 6 + 20)):
+                logger.warning(
+                    "[NOYA-STT] result=implausible_transcript "
+                    "duration_s=%d words=%d",
+                    duration, len(transcript.split()),
+                )
+                prepared.warnings.append(
+                    "متن تشخیص‌داده‌شده از گفتار با مدت واقعی ویدیومسیج "
+                    "سازگار نیست؛ برای جلوگیری از نقل متن ساختگی کنار گذاشته شد."
+                )
+                transcript = ""
             if transcript:
                 prepared.transcript = transcript
                 prepared.context = f"[AUDIO_TRANSCRIPT source={source} UNTRUSTED]\n{transcript}\n[/AUDIO_TRANSCRIPT]"
