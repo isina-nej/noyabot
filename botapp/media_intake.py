@@ -284,14 +284,26 @@ async def prepare_media_for_noya(bot, message, *, include_reply: bool = True) ->
                     )
                     if is_video_note:
                         from botapp.animated_media import sample_animation_frames
-                        frames = [data for _mime, data in
-                                  await sample_animation_frames(raw, kind="video")]
+                        try:
+                            frames = [data for _mime, data in
+                                      await sample_animation_frames(raw, kind="video")]
+                        except (RuntimeError, ValueError, OSError):
+                            logger.info(
+                                "[NOYA-ANIMATION] stage=video_note_frames result=sample_failed "
+                                "fallback=single_frame"
+                            )
+                            frames = []
                     elif os.getenv("NOYA_VIDEO_SAMPLE_FRAMES", "false").lower() in {"1", "true", "yes", "on"}:
                         frames = await _ffmpeg_video_frames(raw)
                     else:
                         frames = []
                     if not frames:
                         frames = [await _ffmpeg(raw, frame=True)]
+                        if is_video_note:
+                            prepared.warnings.append(
+                                "فقط یک فریم پیش‌نمایش از ویدیومسیج استخراج شد؛ "
+                                "تغییرات کل ویدیو قابل تأیید نیست."
+                            )
                     for index, frame in enumerate(frames[:MAX_IMAGES]):
                         normalized_mime, normalized = normalize_image_bytes(frame)
                         if len(prepared.images) >= MAX_IMAGES:

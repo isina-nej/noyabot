@@ -2,6 +2,10 @@
 import gzip
 import io
 import json
+import shutil
+import subprocess
+import tempfile
+from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
 
@@ -139,6 +143,64 @@ class AnimatedVisionTest(SimpleTestCase):
         oversized = gzip.compress(b"a" * 1_200_000)
         with self.assertRaises(ValueError):
             _bounded_tgs_json(oversized)
+
+    def test_jpeg_stream_frame_parser_rejects_truncated_data(self):
+        from botapp.animated_media import _mjpeg_frames
+        a = io.BytesIO()
+        b = io.BytesIO()
+        Image.new("RGB", (12, 12), "red").save(a, format="JPEG")
+        Image.new("RGB", (12, 12), "blue").save(b, format="JPEG")
+        samples = _mjpeg_frames(a.getvalue() + b.getvalue())
+        self.assertEqual(len(samples), 2)
+        self.assertTrue(all(x.startswith(b"\xff\xd8") for x in samples))
+        with self.assertRaises(RuntimeError):
+            _mjpeg_frames(a.getvalue() + b.getvalue()[:-2])
+
+    def test_video_path_decodes_three_real_jpegs_without_apng(self):
+        from botapp.animated_media import _video_to_frames
+        first = io.BytesIO()
+        middle = io.BytesIO()
+        last = io.BytesIO()
+        Image.new("RGB", (20, 20), "red").save(first, format="JPEG")
+        Image.new("RGB", (20, 20), "green").save(middle, format="JPEG")
+        Image.new("RGB", (20, 20), "blue").save(last, format="JPEG")
+        stream = first.getvalue() + middle.getvalue() + last.getvalue()
+        with patch("botapp.animated_media._communicate",
+                   new=AsyncMock(return_value=stream)) as worker:
+            frames = async_to_sync(_video_to_frames)(b"MP4",)
+        self.assertEqual(len(frames), 3)
+        self.assertEqual(len({x[1] for x in frames}), 3)
+        argv = worker.await_args.args[0]
+        self.assertIn("mjpeg", argv)
+        self.assertIn("image2pipe", argv)
+        self.assertNotIn("apng", argv)
+
+    def test_real_mp4_gif_and_video_note_have_distinct_frames(self):
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg is unavailable on this runner")
+        with tempfile.TemporaryDirectory() as tmp:
+            filename = Path(tmp) / "sample.mp4"
+            subprocess.run(
+                [
+                    "ffmpeg", "-nostdin", "-hide_banner", "-loglevel", "error",
+                    "-y", "-f", "lavfi", "-i",
+                    "testsrc2=size=96x96:rate=3:duration=4",
+                    "-c:v", "mpeg4", "-q:v", "8",
+                    "-movflags", "+faststart", str(filename),
+                ],
+                check=True, timeout=15, capture_output=True,
+            )
+            raw = filename.read_bytes()
+        for label in ("gif-as-mp4", "video-note"):
+            with self.subTest(label=label):
+                frames = async_to_sync(sample_animation_frames)(raw, kind="video")
+                self.assertEqual(len(frames), 3)
+                self.assertEqual(len({data for _, data in frames}), 3)
+                for mime, blob in frames:
+                    self.assertEqual(mime, "image/jpeg")
+                    with Image.open(io.BytesIO(blob)) as img:
+                        self.assertGreater(img.width, 0)
+                        self.assertLessEqual(max(img.size), 512)
 
     def test_invalid_animation_kind_rejected(self):
         with self.assertRaises(ValueError):
