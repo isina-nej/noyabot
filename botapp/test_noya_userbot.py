@@ -5,6 +5,8 @@ import asyncio
 import base64
 import io
 import os
+import shutil
+import wave
 from pathlib import Path
 from types import SimpleNamespace
 from unittest.mock import AsyncMock, patch
@@ -14,6 +16,7 @@ from django.test import SimpleTestCase
 
 from botapp.noya_userbot import (
     NoyaUserbot, UserbotConfig, _content_type, _read_media, _same_chat_reference,
+    _voice_file,
     _short_chunks, should_answer,
 )
 
@@ -272,6 +275,19 @@ class UserbotDeliveryTests(SimpleTestCase):
             [x.kwargs.get("reply_to") for x in c.send_message.await_args_list],
             [120, None, 702],
         )
+
+    def test_generated_tts_encodes_real_ogg_opus_voice_note(self):
+        if not shutil.which("ffmpeg"):
+            self.skipTest("ffmpeg is required for Telegram voice encoding")
+        wav = io.BytesIO()
+        with wave.open(wav, "wb") as voice:
+            voice.setnchannels(1)
+            voice.setsampwidth(2)
+            voice.setframerate(16000)
+            voice.writeframes(b"\\x00\\x00" * 8000)
+        stream = async_to_sync(_voice_file)(wav.getvalue())
+        self.assertEqual(stream.name, "noya_voice.ogg")
+        self.assertTrue(stream.read(4).startswith(b"OggS"))
 
     def test_generated_image_and_audio_use_same_authenticated_peer(self):
         c = _client()
