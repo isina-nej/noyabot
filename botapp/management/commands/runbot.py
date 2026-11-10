@@ -85,6 +85,10 @@ from botapp.noya_bot_chat import (
 from botapp.noya_edits import coordinator as noya_edit_coordinator
 from botapp.noya_chat_actions import with_chat_action, set_active_chat_action
 from botapp.noya_address import is_addressing_noya
+from botapp.noya_wait_notice import (
+    remember_waiting_notice,
+    clear_waiting_notice_after_send,
+)
 from botapp.telegram_media import collect_noya_images
 from botapp.telegram_rich import extract_message_body
 from botapp.emoji_handlers import router as emoji_router
@@ -491,6 +495,9 @@ async def reply_noya_answer(message: Message, answer: str) -> None:
         sent = await message.reply(text, parse_mode="HTML")
     except TelegramBadRequest:
         sent = await message.reply(text)
+    # The final reply is confirmed sent. Remove the 60-second status now;
+    # never delete it if both Telegram send attempts failed.
+    await clear_waiting_notice_after_send(message)
     try:
         from botapp import bot_inbox
         if bot_inbox.enabled() and sent is not None:
@@ -571,7 +578,9 @@ async def _deliver_noya_media_sequence(message: Message, metadata: dict) -> bool
 
     logger.info("[NOYA-AGENT] Mixed-media sequence sent=%d requested=%d",
                 count, len(sequence))
-    if count == 0:
+    if count > 0:
+        await clear_waiting_notice_after_send(message)
+    else:
         await reply_noya_answer(message, "ارسال فایل‌ها و پیام‌ها ناموفق بود؛ دوباره امتحان کنیم؟")
     return True
 
@@ -615,6 +624,9 @@ async def _deliver_noya_requested_reaction(
         result = False
     metadata["_reaction_delivery_success"] = bool(result)
     logger.info("[NOYA-AGENT] Telegram reaction sent=%s mode=%s", bool(result), mode)
+    if result and mode == "only":
+        # A reaction-only answer has no text/voice/photo to await.
+        await clear_waiting_notice_after_send(message)
     if not result and not quiet_failure:
         await reply_noya_answer(message, "تلگرام اجازه ثبت این ری‌اکشن رو روی پیام نداد.")
     return True
@@ -699,7 +711,9 @@ async def _deliver_noya_queued_messages(message: Message, metadata: dict) -> boo
 
     logger.info("[NOYA-AGENT] Multi-message outbox sent=%d requested=%d",
                 sent_count, min(len(batch), MAX_CHAT_OUTBOX_MESSAGES))
-    if sent_count == 0:
+    if sent_count > 0:
+        await clear_waiting_notice_after_send(message)
+    else:
         await reply_noya_answer(message, "نتونستم پیام‌های جداگانه رو ارسال کنم؛ دوباره امتحان کنیم؟")
     return True
 
@@ -747,7 +761,9 @@ async def _deliver_noya_agent_media(message: Message, answer: str, metadata: dic
 
     if not (image_sent or audio_sent):
         await reply_noya_answer(message, "فایل آماده شد، اما ارسال آن به تلگرام موفق نبود.")
-    elif audio_sent and not image_sent:
+    else:
+        await clear_waiting_notice_after_send(message)
+    if audio_sent and not image_sent:
         # A voice note is already a complete reply; additional text is optional.
         clean_answer = (answer or "").replace("صدا آماده شد.", "").strip()
         if clean_answer:
@@ -1671,13 +1687,15 @@ def _is_image_edit_request(text: str, has_reply_image: bool) -> bool:
 
 
 async def _await_noya_operation(message: Message, operation):
-    """Five-minute wall-clock cap plus one 60-second Telegram notice."""
+    """Five-minute cap; retain the 60-second notice ID until final delivery."""
     notice = asyncio.create_task(_noya_delayed_notice(message))
     try:
         return await asyncio.wait_for(operation, timeout=300)
     finally:
         notice.cancel()
-        await asyncio.gather(notice, return_exceptions=True)
+        outcomes = await asyncio.gather(notice, return_exceptions=True)
+        if outcomes and not isinstance(outcomes[0], BaseException):
+            remember_waiting_notice(message, outcomes[0])
 
 
 @with_chat_action("upload_photo")
@@ -1691,18 +1709,19 @@ async def _handle_noya_image_generation(message: Message, prompt_text: str, *, d
                      if direct_prompt else generate_noya_image(prompt_clean))
         image_bytes = await _await_noya_operation(message, operation)
     except asyncio.TimeoutError:
-        await message.reply("پنج دقیقه گذشت و ساخت تصویر کامل نشد؛ دوباره امتحان کنیم؟")
+        await reply_noya_answer(message, "پنج دقیقه گذشت و ساخت تصویر کامل نشد؛ دوباره امتحان کنیم؟")
         return
     if not image_bytes:
-        await message.reply("متأسفانه نتونستم این عکس رو بسازم. لطفاً دوباره با یه توصیف دیگه امتحان کن.")
+        await reply_noya_answer(message, "متأسفانه نتونستم این عکس رو بسازم. لطفاً دوباره با یه توصیف دیگه امتحان کن.")
         return
     try:
         photo = BufferedInputFile(image_bytes, filename="noya.png")
         caption = f"اینم نقاشیت! 🎨\n<blockquote>{escape(prompt_clean[:120])}</blockquote>"
         await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
+        await clear_waiting_notice_after_send(message)
     except TelegramAPIError:
         logger.exception("Failed sending generated photo to chat=%s", message.chat.id)
-        await message.reply("عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
+        await reply_noya_answer(message, "عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
 
 
 @with_chat_action("upload_photo")
@@ -1713,19 +1732,20 @@ async def _handle_noya_image_edit(message: Message, instruction: str, image_data
             message, edit_noya_image(instruction, image_data, image_mime),
         )
     except asyncio.TimeoutError:
-        await message.reply("پنج دقیقه گذشت و ویرایش عکس کامل نشد.")
+        await reply_noya_answer(message, "پنج دقیقه گذشت و ویرایش عکس کامل نشد.")
         return
     if not edited_bytes:
-        await message.reply("متأسفانه نتونستم عکس رو ویرایش کنم. لطفاً دوباره امتحان کن.")
+        await reply_noya_answer(message, "متأسفانه نتونستم عکس رو ویرایش کنم. لطفاً دوباره امتحان کن.")
         return
     try:
         ext = "jpg" if edited_bytes.startswith(b"\xff\xd8") else "png"
         photo = BufferedInputFile(edited_bytes, filename=f"noya_edit.{ext}")
         caption = f"بفرما! ✏️\n<blockquote>{escape(instruction[:120])}</blockquote>"
         await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
+        await clear_waiting_notice_after_send(message)
     except TelegramAPIError:
         logger.exception("Failed sending edited photo to chat=%s", message.chat.id)
-        await message.reply("عکس ویرایش شد ولی در ارسال خطا پیش اومد.")
+        await reply_noya_answer(message, "عکس ویرایش شد ولی در ارسال خطا پیش اومد.")
 
 
 @router.message(Command("draw", "image", "pic", "عکس"))
@@ -1773,19 +1793,20 @@ async def _handle_noya_tts(message: Message, text: str, *, as_noya: bool = True)
             message, generate_noya_tts(text_clean, as_noya=as_noya),
         )
     except asyncio.TimeoutError:
-        await message.reply("پنج دقیقه گذشت و ساخت ویس کامل نشد.")
+        await reply_noya_answer(message, "پنج دقیقه گذشت و ساخت ویس کامل نشد.")
         return
     if not audio_bytes:
-        await message.reply("متأسفانه نتونستم ویس بسازم. لطفاً دوباره امتحان کن.")
+        await reply_noya_answer(message, "متأسفانه نتونستم ویس بسازم. لطفاً دوباره امتحان کن.")
         return
     try:
         voice_file = BufferedInputFile(audio_bytes, filename="noya_voice.mp3")
         caption = f"🎙️ <blockquote>{escape(text_clean[:120])}</blockquote>"
         await set_active_chat_action("upload_voice")
         await message.reply_voice(voice=voice_file, caption=caption, parse_mode="HTML")
+        await clear_waiting_notice_after_send(message)
     except TelegramAPIError:
         logger.exception("Failed sending TTS voice to chat=%s", message.chat.id)
-        await message.reply("ویس ساخته شد ولی در ارسال خطایی پیش اومد.")
+        await reply_noya_answer(message, "ویس ساخته شد ولی در ارسال خطایی پیش اومد.")
 
 
 async def _handle_reply_media_intent(message: Message, ask: str, media) -> bool:
@@ -1837,13 +1858,14 @@ async def _handle_reply_media_intent(message: Message, ask: str, media) -> bool:
     return False
 
 
-async def _noya_delayed_notice(message: Message) -> None:
-    """One user-visible waiting reply only if an operation crosses 60 seconds."""
+async def _noya_delayed_notice(message: Message) -> Message | None:
+    """Send at most one waiting notice after 60 seconds and return its ID."""
     await asyncio.sleep(60)
     try:
-        await message.reply("یک لحظه صبر کن عزیزم")
+        return await message.reply("یک لحظه صبر کن عزیزم")
     except TelegramAPIError as exc:
         logger.warning("Noya waiting notice failed: %s", type(exc).__name__)
+        return None
 
 
 @router.message(Command("profile_save"))
@@ -2516,17 +2538,23 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
         return
     # Explicitly allowed low-stakes group silence is not a Telegram reply.
     if agent_metadata.get("no_reply") and not is_analysis:
+        # The model intentionally produced no final reply. Do not leave a
+        # stale "please wait" message when nothing else will follow.
+        await clear_waiting_notice_after_send(message)
         return
     # An attached native reaction can be the entire output if the model
     # produced no other reply; never send a meaningless ellipsis.
     if reaction_with_reply and not any_other_reply:
+        if agent_metadata.get("_reaction_delivery_success"):
+            await clear_waiting_notice_after_send(message)
         return
     # A trusted model reaction is an alternative to a text reply, never a
     # substitute for analysis or any generated attachment.
     emoji = agent_metadata.get("reaction_emoji")
     if (emoji and not is_analysis and not agent_metadata.get("generated_image_b64")
             and not agent_metadata.get("generated_tts_audio")):
-        await react_to_noya_message(message, emoji)
+        if await react_to_noya_message(message, emoji):
+            await clear_waiting_notice_after_send(message)
         return
     # Message analysis requests MUST always yield textual response; never photo/voice or action
     if is_analysis:
@@ -2538,7 +2566,11 @@ async def _answer_noya_chat(message: Message, question: str, *, use_quota: bool)
     if not media_delivered:
         # --- Legacy ACTION dispatch (fallback for non-agent mode) ---
         handled = await _dispatch_ai_action(message, answer or "", images=images)
-        if not handled:
+        if handled:
+            # Legacy action dispatcher reports True only when it handled the
+            # final delivery; do not leave the interim wait notice behind.
+            await clear_waiting_notice_after_send(message)
+        else:
             await reply_noya_answer(message, answer)
     logger.info(
         "[NOYA-TIMING] 📤 Telegram reply finished for msg_id=%s in %.1fms (total_turn=%.1fms)",
