@@ -374,7 +374,9 @@ class NoyaUserSession:
         lock = self._locks.setdefault(chat_id, asyncio.Lock())
         async with lock:
             try:
-                await self._handle_one(event, sender, reply, body)
+                await self._with_notice(
+                    chat_id, incoming.id, self._handle_one(event, sender, reply, body),
+                )
             except asyncio.CancelledError:
                 raise
             except Exception:
@@ -393,13 +395,13 @@ class NoyaUserSession:
             if not quoted:
                 await self._send_text(chat_id, msg_id, "روی یک پیام متنی ریپلای کن.")
                 return
-            await self._with_notice(chat_id, msg_id, self._send_image(chat_id, msg_id, quoted))
+            await self._send_image(chat_id, msg_id, quoted)
             return
         if selected == "voice":
             if not quoted:
                 await self._send_text(chat_id, msg_id, "روی یک پیام متنی ریپلای کن.")
                 return
-            await self._with_notice(chat_id, msg_id, self._send_voice(chat_id, msg_id, quoted))
+            await self._send_voice(chat_id, msg_id, quoted)
             return
         if selected == "text":
             await self._send_text(chat_id, msg_id, media.transcript or quoted or "متنی پیدا نشد.")
@@ -415,15 +417,15 @@ class NoyaUserSession:
             return
         img_prompt = DRAW_PATTERN.match(ask)
         if img_prompt:
-            await self._with_notice(chat_id, msg_id, self._send_image(chat_id, msg_id, img_prompt.group(1).strip()))
+            await self._send_image(chat_id, msg_id, img_prompt.group(1).strip())
             return
         voice_prompt = VOICE_PATTERN.match(ask)
         if voice_prompt:
-            await self._with_notice(chat_id, msg_id, self._send_voice(chat_id, msg_id, voice_prompt.group(1).strip()))
+            await self._send_voice(chat_id, msg_id, voice_prompt.group(1).strip())
             return
         direct_image = explicit_image_prompt(ask, has_reply=reply is not None)
         if direct_image and not media.images:
-            await self._with_notice(chat_id, msg_id, self._send_image(chat_id, msg_id, direct_image))
+            await self._send_image(chat_id, msg_id, direct_image)
             return
         reply_image = next((v for v in media.images if v.get("source") == "reply"), None)
         if reply_image and EDIT_PATTERN.search(ask):
@@ -432,7 +434,7 @@ class NoyaUserSession:
                 await self._send_image(chat_id, msg_id, ask, image=data) if data else await self._send_text(
                     chat_id, msg_id, "ویرایش تصویر ممکن نشد.",
                 )
-            await self._with_notice(chat_id, msg_id, edit())
+            await edit()
             return
         if media.has_audio and re.search(r"(?:متن کن|تبدیل به متن|transcribe|رونوشت|پیاده)", ask, re.I):
             await self._send_text(chat_id, msg_id, media.transcript or "متن قابل تشخیصی پیدا نشد.")
@@ -479,7 +481,7 @@ class NoyaUserSession:
             )
 
         async with self.client.action(chat_id, "typing"):
-            answer_text, metadata = await self._with_notice(chat_id, msg_id, answer())
+            answer_text, metadata = await asyncio.wait_for(answer(), timeout=300)
         metadata = metadata or {}
         if metadata.get("no_reply"):
             return
