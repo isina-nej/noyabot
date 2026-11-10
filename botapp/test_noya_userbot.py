@@ -284,7 +284,7 @@ class UserbotDeliveryTests(SimpleTestCase):
             voice.setnchannels(1)
             voice.setsampwidth(2)
             voice.setframerate(16000)
-            voice.writeframes(b"\\x00\\x00" * 8000)
+            voice.writeframes(b"\x00\x00" * 8000)
         stream = async_to_sync(_voice_file)(wav.getvalue())
         self.assertEqual(stream.name, "noya_voice.ogg")
         self.assertTrue(stream.read(4).startswith(b"OggS"))
