@@ -119,19 +119,39 @@ class UserSessionSendTests(SimpleTestCase):
             len(args.args[1]) <= 3900 for args in client.send_message.await_args_list
         ))
 
-    async def test_wait_notice_removed_after_operation(self):
+    async def test_wait_notice_cleared_after_completion(self):
         client = SimpleNamespace(
             send_message=AsyncMock(return_value=SimpleNamespace(id=44)),
             delete_messages=AsyncMock(),
         )
         runner = NoyaUserSession(client, make_config(), 999, "myuser")
-        async def quick_notice():
-            await runner._with_notice(-100777, 12, AsyncMock(return_value="ok")())
-        with patch("botapp.user_session.asyncio.sleep", new=AsyncMock()) as sleep:
-            await quick_notice()
-            self.assertTrue(sleep.await_count >= 0)
-        # Completion before 60 seconds does not generate a waiting message.
+        result = await runner._with_notice(-100777, 12, AsyncMock(return_value="ok")())
+        self.assertEqual(result, "ok")
+        client.send_message.assert_not_awaited()
         client.delete_messages.assert_not_awaited()
+
+    async def test_notice_sent_and_deleted_when_slow(self):
+        import asyncio
+        delivered = asyncio.Event()
+
+        async def send(*args, **kwargs):
+            delivered.set()
+            return SimpleNamespace(id=44)
+
+        client = SimpleNamespace(
+            send_message=AsyncMock(side_effect=send),
+            delete_messages=AsyncMock(),
+        )
+        runner = NoyaUserSession(client, make_config(), 999, "myuser")
+
+        async def slow_request():
+            await delivered.wait()
+            return "ok"
+
+        with patch("botapp.user_session.asyncio.sleep", new=AsyncMock()):
+            result = await runner._with_notice(-100777, 12, slow_request())
+        self.assertEqual(result, "ok")
+        client.delete_messages.assert_awaited_once_with(-100777, [44])
 
     async def test_history_bounded_and_untrusted(self):
         class Client:
