@@ -36,12 +36,14 @@ NOYA_STT_ENABLED=true
 ابتدا با همان کاربر غیر root که سرویس قرار است اجرا شود، از یک ترمینال امن لاگین کن:
 
 ~~~bash
+id noya >/dev/null 2>&1 || sudo useradd --system --user-group --home /var/lib/noya --shell /usr/sbin/nologin noya
 sudo install -d -m 700 -o noya -g noya /var/lib/noya
+sudo chown noya:noya /opt/noyabot/.env
 sudo chmod 600 /opt/noyabot/.env
 sudo -u noya -H bash -c 'cd /opt/noyabot && .venv/bin/python manage.py runuser --login'
 ~~~
 
-در صورت نبود کاربر noya ابتدا یک کاربر سرویس غیر root ایجاد کن و به مسیرهای لازم دسترسی بده. کد ورود تلگرام و رمز دومرحله‌ای صرفاً در ترمینال دریافت می‌شوند. پس از لاگین و ساخت فایل session، اجرای تعاملی را با Ctrl+C متوقف و سرویس را فعال کن:
+اگر از دیتابیس SQLite استفاده می‌کنی، یوزر noya باید روی فایل DB و پوشه آن حق نوشتن داشته باشد؛ در production با MySQL از مجوزهای DB_* فعلی پروژه استفاده کن. استفاده از یک فایل .env مشترک به معنی دسترسی یوزر سرویس به کلیدهای آن است؛ در محیط حساس متغیرهای موردنیاز را در فایل محیطی اختصاصی و محدود قرار بده. کد ورود تلگرام و رمز دومرحله‌ای صرفاً در ترمینال دریافت می‌شوند. پس از لاگین و ساخت فایل session، اجرای تعاملی را با Ctrl+C متوقف و سرویس را فعال کن:
 
 ~~~bash
 sudo cp deploy/observability/noya-user.service.example /etc/systemd/system/noya-user.service
