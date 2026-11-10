@@ -138,6 +138,28 @@ def _strip_address(text: str, username: str) -> str:
     return _WAKE.sub("", text, count=1).strip(" \n,،:!؟?")
 
 
+def _same_chat_reference(text: str, *, chat_id: int, chat_username: str = "") -> int | None:
+    """Resolve links only for the *current* authenticated Telegram dialog."""
+    text = str(text or "")[:5000]
+    normalized = str(abs(int(chat_id)))
+    private_token = normalized[3:] if normalized.startswith("100") else ""
+    for token, mid in re.findall(
+        r"https?://(?:www\.)?t\.me/c/(\d+)/(\d+)(?:[/?#]|$)", text,
+        flags=re.IGNORECASE,
+    ):
+        if private_token and token == private_token and int(mid) > 0:
+            return int(mid)
+    if chat_username:
+        name = re.escape(chat_username.lstrip("@"))
+        match = re.search(
+            rf"https?://(?:www\.)?t\.me/{name}/(\d+)(?:[/?#]|$)",
+            text, flags=re.IGNORECASE,
+        )
+        if match and int(match.group(1)) > 0:
+            return int(match.group(1))
+    return None
+
+
 def _content_type(message) -> str:
     if getattr(message, "photo", None):
         return "photo"
@@ -393,6 +415,22 @@ class NoyaUserbot:
         # Only retrieve the original media when user explicitly addressed us
         # in this authorized dialog; no automatic bulk media scraping.
         media_message = event.message if getattr(event.message, "media", None) else reply
+        if media_message is None:
+            # Users may send a historical link instead of replying. Always
+            # fetch from the authenticated incoming peer, never from the URL.
+            old_mid = _same_chat_reference(
+                query, chat_id=int(event.chat_id),
+                chat_username=str(getattr(await event.get_chat(), "username", "") or ""),
+            )
+            if old_mid is not None and old_mid < int(event.id):
+                try:
+                    media_message = await self.client.get_messages(
+                        event.input_chat, ids=old_mid,
+                    )
+                except Exception as exc:
+                    logger.info("[NOYA-USERBOT] same_chat_reference_unavailable type=%s",
+                                type(exc).__name__)
+                    media_message = None
         if media_message is not None and getattr(media_message, "media", None):
             frames, spoken, warnings = await _read_media(
                 self.client, media_message,
@@ -407,11 +445,14 @@ class NoyaUserbot:
             query += "\n\n[MEDIA_WARNINGS]\n" + "\n".join(warnings) + "\n[/MEDIA_WARNINGS]"
         if history:
             query += "\n\n[RECENT_CHAT_MESSAGES]\n" + history + "\n[/RECENT_CHAT_MESSAGES]"
-        if reply is not None:
+        quoted = reply if reply is not None else (
+            media_message if media_message is not event.message else None
+        )
+        if quoted is not None:
             query += (
-                "\n\n[REPLIED_MESSAGE]\n"
-                + str(getattr(reply, "raw_text", "") or "[رسانه]")[:1600]
-                + "\n[/REPLIED_MESSAGE]"
+                "\\n\\n[REPLIED_MESSAGE]\\n"
+                + str(getattr(quoted, "raw_text", "") or "[رسانه]")[:1600]
+                + "\\n[/REPLIED_MESSAGE]"
             )
 
         fake = await self._build_message(event, reply)
