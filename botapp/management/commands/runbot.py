@@ -1709,18 +1709,19 @@ async def _handle_noya_image_generation(message: Message, prompt_text: str, *, d
                      if direct_prompt else generate_noya_image(prompt_clean))
         image_bytes = await _await_noya_operation(message, operation)
     except asyncio.TimeoutError:
-        await message.reply("پنج دقیقه گذشت و ساخت تصویر کامل نشد؛ دوباره امتحان کنیم؟")
+        await reply_noya_answer(message, "پنج دقیقه گذشت و ساخت تصویر کامل نشد؛ دوباره امتحان کنیم؟")
         return
     if not image_bytes:
-        await message.reply("متأسفانه نتونستم این عکس رو بسازم. لطفاً دوباره با یه توصیف دیگه امتحان کن.")
+        await reply_noya_answer(message, "متأسفانه نتونستم این عکس رو بسازم. لطفاً دوباره با یه توصیف دیگه امتحان کن.")
         return
     try:
         photo = BufferedInputFile(image_bytes, filename="noya.png")
         caption = f"اینم نقاشیت! 🎨\n<blockquote>{escape(prompt_clean[:120])}</blockquote>"
         await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
+        await clear_waiting_notice_after_send(message)
     except TelegramAPIError:
         logger.exception("Failed sending generated photo to chat=%s", message.chat.id)
-        await message.reply("عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
+        await reply_noya_answer(message, "عکس ساخته شد ولی در ارسال تلگرام خطایی پیش اومد.")
 
 
 @with_chat_action("upload_photo")
@@ -1731,19 +1732,20 @@ async def _handle_noya_image_edit(message: Message, instruction: str, image_data
             message, edit_noya_image(instruction, image_data, image_mime),
         )
     except asyncio.TimeoutError:
-        await message.reply("پنج دقیقه گذشت و ویرایش عکس کامل نشد.")
+        await reply_noya_answer(message, "پنج دقیقه گذشت و ویرایش عکس کامل نشد.")
         return
     if not edited_bytes:
-        await message.reply("متأسفانه نتونستم عکس رو ویرایش کنم. لطفاً دوباره امتحان کن.")
+        await reply_noya_answer(message, "متأسفانه نتونستم عکس رو ویرایش کنم. لطفاً دوباره امتحان کن.")
         return
     try:
         ext = "jpg" if edited_bytes.startswith(b"\xff\xd8") else "png"
         photo = BufferedInputFile(edited_bytes, filename=f"noya_edit.{ext}")
         caption = f"بفرما! ✏️\n<blockquote>{escape(instruction[:120])}</blockquote>"
         await message.reply_photo(photo=photo, caption=caption, parse_mode="HTML")
+        await clear_waiting_notice_after_send(message)
     except TelegramAPIError:
         logger.exception("Failed sending edited photo to chat=%s", message.chat.id)
-        await message.reply("عکس ویرایش شد ولی در ارسال خطا پیش اومد.")
+        await reply_noya_answer(message, "عکس ویرایش شد ولی در ارسال خطا پیش اومد.")
 
 
 @router.message(Command("draw", "image", "pic", "عکس"))
@@ -1791,19 +1793,20 @@ async def _handle_noya_tts(message: Message, text: str, *, as_noya: bool = True)
             message, generate_noya_tts(text_clean, as_noya=as_noya),
         )
     except asyncio.TimeoutError:
-        await message.reply("پنج دقیقه گذشت و ساخت ویس کامل نشد.")
+        await reply_noya_answer(message, "پنج دقیقه گذشت و ساخت ویس کامل نشد.")
         return
     if not audio_bytes:
-        await message.reply("متأسفانه نتونستم ویس بسازم. لطفاً دوباره امتحان کن.")
+        await reply_noya_answer(message, "متأسفانه نتونستم ویس بسازم. لطفاً دوباره امتحان کن.")
         return
     try:
         voice_file = BufferedInputFile(audio_bytes, filename="noya_voice.mp3")
         caption = f"🎙️ <blockquote>{escape(text_clean[:120])}</blockquote>"
         await set_active_chat_action("upload_voice")
         await message.reply_voice(voice=voice_file, caption=caption, parse_mode="HTML")
+        await clear_waiting_notice_after_send(message)
     except TelegramAPIError:
         logger.exception("Failed sending TTS voice to chat=%s", message.chat.id)
-        await message.reply("ویس ساخته شد ولی در ارسال خطایی پیش اومد.")
+        await reply_noya_answer(message, "ویس ساخته شد ولی در ارسال خطایی پیش اومد.")
 
 
 async def _handle_reply_media_intent(message: Message, ask: str, media) -> bool:
