@@ -450,9 +450,9 @@ class NoyaUserbot:
         )
         if quoted is not None:
             query += (
-                "\\n\\n[REPLIED_MESSAGE]\\n"
+                "\n\n[REPLIED_MESSAGE]\n"
                 + str(getattr(quoted, "raw_text", "") or "[رسانه]")[:1600]
-                + "\\n[/REPLIED_MESSAGE]"
+                + "\n[/REPLIED_MESSAGE]"
             )
 
         fake = await self._build_message(event, reply)
