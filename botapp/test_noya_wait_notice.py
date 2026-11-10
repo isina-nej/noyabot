@@ -267,9 +267,10 @@ class WaitingNoticeLifecycleTests(SimpleTestCase):
 
     def test_direct_image_edit_and_tts_cleanup(self):
         message = _message()
+        ids = iter((714, 715))
         async def await_fake(current, operation):
             result = await operation
-            remember_waiting_notice(current, _notice(current, 714))
+            remember_waiting_notice(current, _notice(current, next(ids)))
             return result
 
         async def scenario():
@@ -286,7 +287,6 @@ class WaitingNoticeLifecycleTests(SimpleTestCase):
                 await _handle_noya_image_edit.__wrapped__(
                     message, "رنگ رو عوض کن", b"source",
                 )
-                remember_waiting_notice(message, _notice(message, 715))
                 await _handle_noya_tts.__wrapped__(message, "سلام")
         async_to_sync(scenario)()
         message.reply_photo.assert_awaited_once()
@@ -295,7 +295,7 @@ class WaitingNoticeLifecycleTests(SimpleTestCase):
         self.assertEqual(
             [call.kwargs["message_id"]
              for call in message.bot.delete_message.await_args_list],
-            [714, 714],
+            [714, 715],
         )
 
     def test_wait_notice_send_fail_does_not_register_cleanup(self):
