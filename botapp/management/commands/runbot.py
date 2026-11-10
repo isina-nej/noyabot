@@ -85,6 +85,10 @@ from botapp.noya_bot_chat import (
 from botapp.noya_edits import coordinator as noya_edit_coordinator
 from botapp.noya_chat_actions import with_chat_action, set_active_chat_action
 from botapp.noya_address import is_addressing_noya
+from botapp.noya_wait_notice import (
+    remember_waiting_notice,
+    clear_waiting_notice_after_send,
+)
 from botapp.telegram_media import collect_noya_images
 from botapp.telegram_rich import extract_message_body
 from botapp.emoji_handlers import router as emoji_router
@@ -491,6 +495,9 @@ async def reply_noya_answer(message: Message, answer: str) -> None:
         sent = await message.reply(text, parse_mode="HTML")
     except TelegramBadRequest:
         sent = await message.reply(text)
+    # The final reply is confirmed sent. Remove the 60-second status now;
+    # never delete it if both Telegram send attempts failed.
+    await clear_waiting_notice_after_send(message)
     try:
         from botapp import bot_inbox
         if bot_inbox.enabled() and sent is not None:
@@ -1671,13 +1678,15 @@ def _is_image_edit_request(text: str, has_reply_image: bool) -> bool:
 
 
 async def _await_noya_operation(message: Message, operation):
-    """Five-minute wall-clock cap plus one 60-second Telegram notice."""
+    """Five-minute cap; retain the 60-second notice ID until final delivery."""
     notice = asyncio.create_task(_noya_delayed_notice(message))
     try:
         return await asyncio.wait_for(operation, timeout=300)
     finally:
         notice.cancel()
-        await asyncio.gather(notice, return_exceptions=True)
+        outcomes = await asyncio.gather(notice, return_exceptions=True)
+        if outcomes and not isinstance(outcomes[0], BaseException):
+            remember_waiting_notice(message, outcomes[0])
 
 
 @with_chat_action("upload_photo")
@@ -1837,13 +1846,14 @@ async def _handle_reply_media_intent(message: Message, ask: str, media) -> bool:
     return False
 
 
-async def _noya_delayed_notice(message: Message) -> None:
-    """One user-visible waiting reply only if an operation crosses 60 seconds."""
+async def _noya_delayed_notice(message: Message) -> Message | None:
+    """Send at most one waiting notice after 60 seconds and return its ID."""
     await asyncio.sleep(60)
     try:
-        await message.reply("یک لحظه صبر کن عزیزم")
+        return await message.reply("یک لحظه صبر کن عزیزم")
     except TelegramAPIError as exc:
         logger.warning("Noya waiting notice failed: %s", type(exc).__name__)
+        return None
 
 
 @router.message(Command("profile_save"))
