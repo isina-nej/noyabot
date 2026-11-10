@@ -224,7 +224,8 @@ class UserbotDeliveryTests(SimpleTestCase):
         c = _client()
         bot = _bot(client=c)
         event = _event()
-        buffer = io.BytesIO(b"ogg");buffer.name = "voice.ogg"
+        buffer = io.BytesIO(b"ogg")
+        buffer.name = "voice.ogg"
         meta = {"queued_media_sequence": [
             {"kind": "text", "text": "نوشته", "reply_to": "current"},
             {"kind": "voice", "bytes": b"mp3", "reply_to": "previous"},
