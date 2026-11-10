@@ -585,10 +585,34 @@ class NoyaUserbot:
                     continue
                 text = item.get("text")
                 mode = item.get("reply_to", "current")
-                if mode not in {"current", "previous", "none"} or not isinstance(text, str):
+                if mode not in {"current", "previous", "none", "archived"} or not isinstance(text, str):
                     continue
                 try:
-                    await say(text[:_MAX_MESSAGE_TEXT], mode)
+                    if mode == "archived":
+                        # Only the archive tool can prepare this verified
+                        # envelope; reject unvalidated chat/target IDs.
+                        if not item.get("verified_group_reply") or event.is_private:
+                            continue
+                        target = int(item.get("target_message_id") or 0)
+                        if not 0 < target < current_id:
+                            continue
+                        body = text[:1600]
+                        sender_id = int(item.get("mention_user_id") or 0)
+                        if sender_id > 0:
+                            from html import escape
+                            label = escape(str(item.get("mention_label") or "دوست عزیز")[:70])
+                            body = (
+                                f'<a href="tg://user?id={sender_id}">{label}</a> '
+                                + escape(body)
+                            )
+                        delivered = await self.client.send_message(
+                            peer, body, reply_to=target,
+                            parse_mode="html" if sender_id else None,
+                        )
+                        total += 1
+                        previous_id = int(getattr(delivered, "id", 0) or 0) or None
+                    else:
+                        await say(text[:_MAX_MESSAGE_TEXT], mode)
                 except Exception as exc:
                     logger.warning("[NOYA-USERBOT] outbox_send_failed type=%s",
                                    type(exc).__name__)
