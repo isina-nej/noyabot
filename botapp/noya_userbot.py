@@ -144,7 +144,7 @@ def _same_chat_reference(text: str, *, chat_id: int, chat_username: str = "") ->
     normalized = str(abs(int(chat_id)))
     private_token = normalized[3:] if normalized.startswith("100") else ""
     for token, mid in re.findall(
-        r"https?://(?:www\.)?t\.me/c/(\d+)/(\d+)(?:[/?#]|$)", text,
+        r"https?://(?:www\.)?t\.me/c/(\d+)/(\d+)(?:[/?#\s]|$)", text,
         flags=re.IGNORECASE,
     ):
         if private_token and token == private_token and int(mid) > 0:
@@ -152,7 +152,7 @@ def _same_chat_reference(text: str, *, chat_id: int, chat_username: str = "") ->
     if chat_username:
         name = re.escape(chat_username.lstrip("@"))
         match = re.search(
-            rf"https?://(?:www\.)?t\.me/{name}/(\d+)(?:[/?#]|$)",
+            rf"https?://(?:www\.)?t\.me/{name}/(\d+)(?:[/?#\s]|$)",
             text, flags=re.IGNORECASE,
         )
         if match and int(match.group(1)) > 0:
