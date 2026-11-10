@@ -465,9 +465,15 @@ class NoyaUserSession:
             payload += "\n[MEDIA_WARNINGS]\n" + "\n".join(media.warnings)
         from botapp.memory.integration import run_ai_with_memory
 
+        async def user_provider(question, session_id, **kwargs):
+            # Telethon cannot safely execute Bot-API moderation tools by default.
+            return await call_noya_api(
+                question, session_id, use_agent=self.config.agent_enabled, **kwargs,
+            )
+
         async def answer():
             return await run_ai_with_memory(
-                adapter, payload, call_noya_api,
+                adapter, payload, user_provider,
                 session_id=f"telegram-user:{self.self_id}:{chat_id}",
                 images=media.images or None,
             )
