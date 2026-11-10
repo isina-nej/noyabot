@@ -1,0 +1,22 @@
+[Unit]
+Description=Noya Telegram user-account session (Telethon)
+Wants=network-online.target
+After=network-online.target
+
+[Service]
+Type=simple
+User=noya
+Group=noya
+WorkingDirectory=/opt/noyabot
+ExecStart=/opt/noyabot/.venv/bin/python manage.py runuser
+Environment=PYTHONUNBUFFERED=1
+UMask=0077
+Restart=on-failure
+RestartSec=10
+TimeoutStopSec=20
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=full
+
+[Install]
+WantedBy=multi-user.target

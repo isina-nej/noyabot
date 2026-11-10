@@ -14,3 +14,7 @@ staticfiles/
 x-bridge/cookies.json
 noyabot.session
 *.session
+*.session-journal
+*.session-shm
+*.session-wal
+var/

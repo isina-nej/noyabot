@@ -66,11 +66,22 @@ def get_or_create_memory_conversation(message) -> MemoryConversation:
     chat_id = int(message.chat.id)
     thread_id = _thread_id(message)
     occurred_at = getattr(message, "date", None)
+    # Separate user-account conversations from Bot API conversations even in
+    # the same group; preserve legacy bot identities without a migration.
+    platform = str(getattr(message, "noya_memory_platform", "telegram"))
+    if platform == "telegram-user":
+        owner_id = int(getattr(message, "noya_memory_owner_id", 0) or 0)
+        if owner_id <= 0:
+            raise ValueError("Missing authenticated Telegram user-session owner")
+        conversation_id = f"telegram-user:{owner_id}:{chat_id}:{thread_id}"
+    else:
+        platform = "telegram"
+        conversation_id = f"telegram:{chat_id}:{thread_id}"
     conversation, _ = MemoryConversation.objects.get_or_create(
-        platform="telegram",
+        platform=platform,
         chat_id=chat_id,
         thread_id=thread_id,
-        conversation_id=f"telegram:{chat_id}:{thread_id}",
+        conversation_id=conversation_id,
         defaults={
             "chat_type": str(message.chat.type),
             "title": _chat_title(message),
@@ -259,7 +270,10 @@ async def _relationship_context_for_message(message) -> dict:
             # Event ids are per-message (not per-wording): repeated forgiveness is
             # prevented by the engine's per-conflict credit cap, not by hashing.
             message_id = int(getattr(message, "message_id", 0) or 0)
-            event_id = f"telegram:{int(chat.id)}:{message_id}:social:{event.kind}"
+            platform = str(getattr(message, "noya_memory_platform", "telegram"))
+            owner = int(getattr(message, "noya_memory_owner_id", 0) or 0)
+            event_prefix = f"telegram-user:{owner}" if platform == "telegram-user" else "telegram"
+            event_id = f"{event_prefix}:{int(chat.id)}:{message_id}:social:{event.kind}"
             state = await sync_to_async(apply_relationship_event, thread_sensitive=True)(
                 user_id, conversation, event, event_id=event_id,
             )
