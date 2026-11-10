@@ -110,7 +110,7 @@ def should_answer(
     reply_sender_id: int | None, username: str, config: UserSessionConfig,
 ) -> bool:
     """Fail closed: no broadcasts, self-responses, bots, or unapproved chats."""
-    if not sender_id or sender_id == self_id or chat_id not in config.allowed_chat_ids:
+    if not sender_id or sender_id <= 0 or sender_id == self_id or chat_id not in config.allowed_chat_ids:
         return False
     if is_private:
         return config.private_replies
