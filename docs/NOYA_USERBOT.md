@@ -58,7 +58,10 @@ Recommended dedicated Unix service account:
 ```bash
 sudo useradd --system --home-dir /var/lib/noya-userbot --shell /usr/sbin/nologin noya-userbot
 sudo install -d -m 700 -o noya-userbot -g noya-userbot /var/lib/noya-userbot
-sudo chmod 600 /opt/noyabot/.env
+# The dedicated service account must read its own settings and API key.
+# The file remains root-owned, accessible only to the noya-userbot group.
+sudo chgrp noya-userbot /opt/noyabot/.env
+sudo chmod 640 /opt/noyabot/.env
 cd /opt/noyabot
 # Run only from a local/trusted interactive terminal. Django loads .env.
 sudo -u noya-userbot .venv/bin/python manage.py login_noya_userbot
