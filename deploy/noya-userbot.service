@@ -1,0 +1,29 @@
+# Independent MTProto user-session service. NOT the BotFather bot.
+# Create a dedicated unprivileged user and 0700 session directory first.
+[Unit]
+Description=Noya AI personal Telegram session (Telethon)
+Wants=network-online.target
+After=network-online.target
+StartLimitIntervalSec=60
+StartLimitBurst=3
+
+[Service]
+Type=simple
+User=noya-userbot
+Group=noya-userbot
+WorkingDirectory=/opt/noyabot
+EnvironmentFile=/opt/noyabot/.env
+Environment=PYTHONUNBUFFERED=1
+ExecStart=/opt/noyabot/.venv/bin/python manage.py run_noya_userbot
+Restart=on-failure
+RestartSec=10
+UMask=0077
+NoNewPrivileges=true
+PrivateTmp=true
+ProtectSystem=strict
+ProtectHome=true
+ReadWritePaths=/var/lib/noya-userbot
+TimeoutStopSec=30
+
+[Install]
+WantedBy=multi-user.target
