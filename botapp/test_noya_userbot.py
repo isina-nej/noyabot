@@ -13,7 +13,7 @@ from asgiref.sync import async_to_sync
 from django.test import SimpleTestCase
 
 from botapp.noya_userbot import (
-    NoyaUserbot, UserbotConfig, _content_type, _read_media,
+    NoyaUserbot, UserbotConfig, _content_type, _read_media, _same_chat_reference,
     _short_chunks, should_answer,
 )
 
@@ -166,6 +166,82 @@ class UserbotTriggerTests(SimpleTestCase):
         self.assertLessEqual(len(_short_chunks("x" * 50000)), 6)
 
 
+class SameChatPermalinkTests(SimpleTestCase):
+    def test_same_group_private_supergroup_link(self):
+        self.assertEqual(
+            _same_chat_reference(
+                "نویا https://t.me/c/3861069387/93764 رو ببین",
+                chat_id=-1003861069387,
+            ), 93764,
+        )
+        self.assertIsNone(_same_chat_reference(
+            "https://t.me/c/3861069387/93764", chat_id=-100555555,
+        ))
+        self.assertIsNone(_same_chat_reference(
+            "https://t.me/c/3861069387/93764", chat_id=123456,
+        ))
+
+    def test_public_group_permalink_must_match_username(self):
+        self.assertEqual(
+            _same_chat_reference(
+                "https://t.me/our_noya_group/123", chat_id=-1005555,
+                chat_username="our_noya_group",
+            ), 123,
+        )
+        self.assertIsNone(_same_chat_reference(
+            "https://t.me/other_group/123", chat_id=-1005555,
+            chat_username="our_noya_group",
+        ))
+
+    def test_retrieves_old_media_from_current_peer_only(self):
+        c = _client()
+        old = SimpleNamespace(
+            id=91, sender_id=999,
+            raw_text="مدرک قدیمی", media=object(),
+            photo=object(), document=None,
+            file=SimpleNamespace(size=80),
+        )
+        c.get_messages.side_effect = [old, []]
+        runtime = _bot(client=c)
+        event = _event("نویا https://t.me/c/1234567890/91 رو بررسی کن")
+        async def provider_runner():
+            async def fake_run_memory(fake, question, provider, *, session_id, images=None):
+                self.assertEqual(len(images), 1)
+                self.assertEqual(images[0]["source"], "reply")
+                self.assertIn("مدرک قدیمی", question)
+                return "انجام شد", {}
+            with patch(
+                "botapp.memory.integration.run_ai_with_memory",
+                new=fake_run_memory,
+            ), patch(
+                "botapp.telegram_media.normalize_image_bytes",
+                return_value=("image/jpeg", b"jpeg"),
+            ):
+                return await runtime._answer(event, None)
+        result = async_to_sync(provider_runner)()
+        self.assertEqual(result[0], "انجام شد")
+        c.get_messages.assert_any_await(
+            event.input_chat, ids=91,
+        )
+        c.download_media.assert_awaited_once_with(old, file=bytes)
+
+    def test_fake_cross_chat_link_never_fetches_foreign_media(self):
+        c = _client()
+        runtime = _bot(client=c)
+        event = _event("نویا https://t.me/c/9999999999/91 رو بررسی کن")
+        async def fake_run_memory(fake, question, provider, *, session_id, images=None):
+            self.assertFalse(images)
+            return "خارج از این چت", {}
+        with patch("botapp.memory.integration.run_ai_with_memory",
+                   new=fake_run_memory):
+            async_to_sync(runtime._answer)(event, None)
+        # Access to current dialog history is okay, accessing a foreign
+        # message ID or peer from an unverified link is not.
+        self.assertFalse(any(
+            "ids" in call.kwargs for call in c.get_messages.await_args_list
+        ))
+
+
 class UserbotDeliveryTests(SimpleTestCase):
     def test_plain_text_is_reply_to_authenticated_message(self):
         c = _client()
@@ -237,6 +313,68 @@ class UserbotDeliveryTests(SimpleTestCase):
         self.assertEqual(c.send_file.await_count, 2)
         self.assertEqual(c.send_file.await_args_list[0].kwargs["reply_to"], 600)
         self.assertIsNone(c.send_file.await_args_list[1].kwargs["reply_to"])
+
+    def test_archived_reply_uses_verified_target_in_current_chat_only(self):
+        c = _client()
+        runtime = _bot(client=c)
+        e = _event()
+        self.assertTrue(async_to_sync(runtime._deliver)(e, "", {
+            "queued_chat_messages": [{
+                "reply_to": "archived", "text": "موفق باشی",
+                "verified_group_reply": True,
+                "target_message_id": 110, "mention_user_id": 1234,
+                "mention_label": "ریحانه",
+            }],
+        }))
+        call = c.send_message.await_args
+        self.assertEqual(call.args[0], e.input_chat)
+        self.assertEqual(call.kwargs["reply_to"], 110)
+        self.assertEqual(call.kwargs["parse_mode"], "html")
+        self.assertIn("tg://user?id=1234", call.args[1])
+
+    def test_unverified_archive_reply_never_sends(self):
+        c = _client()
+        runtime = _bot(client=c)
+        e = _event()
+        async_to_sync(runtime._deliver)(e, "", {
+            "queued_chat_messages": [{
+                "reply_to": "archived", "text": "secret",
+                "verified_group_reply": False,
+                "target_message_id": 110,
+            }],
+        })
+        c.send_message.assert_not_awaited()
+
+    def test_provider_receives_real_authenticated_scope_not_shadow_id(self):
+        c = _client()
+        runtime = _bot(client=c)
+        ev = _event("نویا جواب بده")
+        recorded = {}
+
+        async def fake_provider_agent(**kwargs):
+            recorded.update(kwargs)
+            return "سلام", {}
+
+        async def fake_memory(fake, question, provider, *, session_id, images=None):
+            self.assertNotEqual(fake.chat.id, ev.chat_id)
+            return await provider(
+                question, session_id, speaker_user_id=ev.sender_id,
+                speaker_name="ریحانه", reaction_allowed=False,
+            )
+        async def run():
+            with patch(
+                "botapp.memory.integration.run_ai_with_memory", new=fake_memory,
+            ), patch(
+                "botapp.agent.loop.run_agent_loop",
+                new=fake_provider_agent,
+            ):
+                return await runtime._answer(ev, None)
+        text, _meta = async_to_sync(run)()
+        self.assertEqual(text, "سلام")
+        scope = recorded["telegram_context"]
+        self.assertEqual(scope["chat_id"], ev.chat_id)
+        self.assertIs(scope["bot"], c)
+        self.assertEqual(scope["current_message_id"], ev.id)
 
     def test_reply_only_if_final_output_was_sent(self):
         c = _client()
