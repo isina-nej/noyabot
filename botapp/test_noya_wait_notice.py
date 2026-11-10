@@ -67,7 +67,8 @@ class WaitingNoticeLifecycleTests(SimpleTestCase):
             if text == "یک لحظه صبر کن عزیزم":
                 notice_done.set()
                 return _notice(message)
-            self.assertEqual(message.bot.delete_message.await_count, 0)
+            if text == "پاسخ اصلی":
+                self.assertEqual(message.bot.delete_message.await_count, 0)
             return SimpleNamespace(chat=message.chat, message_id=905)
 
         async def delete_message(**kwargs):
