@@ -471,9 +471,31 @@ class NoyaUserbot:
             "\n[/NOYA_TELETHON_SESSION]"
         )
         async def provider(enriched, session_id, **kwargs):
-            # The memory adapter has no Bot-API bot. MTProto outbound actions
-            # run only in _deliver(), never from arbitrary model/tool args.
-            kwargs["telegram_context"] = None
+            # This is an application-created capability from the ACTUAL
+            # authenticated Telegram event, never any text supplied to the AI.
+            # It lets Noya stage reactions and bounded same-group replies.
+            # Admin/ban/delete Bot API operations are not in chat catalog.
+            from botapp.noya_reactions import explicit_reaction_intent
+            live_chat = SimpleNamespace(
+                id=int(event.chat_id),
+                type="private" if event.is_private else "supergroup",
+                is_forum=bool(getattr(await event.get_chat(), "forum", False)),
+            )
+            reply_to = int(getattr(reply, "id", 0) or 0)
+            topic_reply = getattr(event.message, "reply_to", None)
+            thread_id = int(getattr(topic_reply, "reply_to_top_id", 0) or 0)
+            kwargs["telegram_context"] = {
+                "bot": self.client, "bot_id": self.owner_id,
+                "chat": live_chat, "chat_id": int(event.chat_id),
+                "chat_type": live_chat.type, "thread_id": thread_id,
+                "current_message_id": int(event.id),
+                "reply_to_message_id": reply_to,
+                "speaker_user_id": int(event.sender_id or 0),
+                "reaction_only_allowed": bool(
+                    kwargs.get("reaction_allowed")
+                    or explicit_reaction_intent(event.raw_text)
+                ),
+            }
             return await run_agent_loop(
                 question=enriched, session_id=session_id,
                 system_prompt=get_noya_system_prompt() + userbot_prompt,
